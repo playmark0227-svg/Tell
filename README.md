@@ -4,9 +4,17 @@
 
 ## デモを見る
 
-GitHub Pagesで公開：`https://playmark0227-svg.github.io/Tell/`
+公開URL：**https://playmark0227-svg.github.io/Tell/**
 
-> リポジトリ Settings → Pages で `Source: Deploy from a branch`、ブランチを `claude/docomo-phone-list-0fW8S`（または mergeしたmain）、フォルダを `/ (root)` に設定すると公開されます。
+### 初回セットアップ（リポジトリオーナーが1回だけ実施）
+
+1. GitHubで `playmark0227-svg/Tell` を開く
+2. **Settings → Pages** に移動
+3. **Source** を `GitHub Actions` に変更（`Deploy from a branch` ではなく）
+4. 保存後、`claude/docomo-phone-list-0fW8S` または `main` への push で自動デプロイ
+5. **Actions** タブでデプロイ進行を確認できます（約1-2分）
+
+`.github/workflows/pages.yml` がpushを検知して自動公開します。
 
 ## 重要な注意（法令遵守）
 
