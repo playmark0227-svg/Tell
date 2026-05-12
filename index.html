@@ -10,7 +10,7 @@
 <header>
   <div class="container">
     <h1>Tell <span class="tag">デモ</span></h1>
-    <p class="lead">商材を入力すると、AIが理想顧客プロファイル（ICP）を生成し、公開法人データから適合度順に並べ替えます。</p>
+    <p class="lead">商材テキストからAIがカテゴリを判別し、理想顧客プロファイル（ICP）を生成、公開法人データを適合度順に並べ替えます。</p>
   </div>
 </header>
 
@@ -30,16 +30,30 @@
   <section class="panel">
     <h2>1. 商材を入力</h2>
     <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
-    <button id="generate-icp">ICPを生成して検索</button>
+    <button id="analyze-btn">AIに商材を判別させて検索</button>
+    <div class="samples">
+      <span class="sample-label">サンプル:</span>
+      <button class="sample-btn" data-sample="中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え">勤怠SaaS</button>
+      <button class="sample-btn" data-sample="法人向け新電力サービス、電気代を10%削減できる切り替え提案">新電力</button>
+      <button class="sample-btn" data-sample="クラウドPBXとIP電話、複数拠点を一本化、通信費削減">クラウドPBX</button>
+      <button class="sample-btn" data-sample="複合機リースとプリント保守、月額制で印刷コスト削減">複合機</button>
+      <button class="sample-btn" data-sample="法人向け生命保険、退職金準備と事業承継対策">法人保険</button>
+      <button class="sample-btn" data-sample="飲食店向けの業務用食材卸、配送つき">業務用食材</button>
+    </div>
+  </section>
+
+  <section class="panel" id="classification-section" hidden>
+    <h2>2. AIによる商材判別</h2>
+    <div id="classification-display"></div>
   </section>
 
   <section class="panel" id="icp-section" hidden>
-    <h2>2. 生成されたICP（理想顧客プロファイル）</h2>
+    <h2>3. 生成されたICP（理想顧客プロファイル）</h2>
     <div id="icp-display"></div>
   </section>
 
   <section class="panel" id="filter-section" hidden>
-    <h2>3. 絞り込み</h2>
+    <h2>4. 絞り込み</h2>
     <div class="filters">
       <label>業種
         <select id="filter-industry">
@@ -67,27 +81,29 @@
   </section>
 
   <section class="panel" id="results-section" hidden>
-    <h2>4. 結果 <span id="result-count" class="muted"></span></h2>
-    <table id="results-table">
-      <thead>
-        <tr>
-          <th>適合度</th>
-          <th>会社名</th>
-          <th>業種</th>
-          <th>所在地</th>
-          <th>規模</th>
-          <th>代表電話</th>
-          <th>根拠</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <h2>5. 結果 <span id="result-count" class="muted"></span></h2>
+    <div class="table-wrap">
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th>適合度</th>
+            <th>会社名</th>
+            <th>業種</th>
+            <th>所在地</th>
+            <th>規模</th>
+            <th>代表電話</th>
+            <th>根拠</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 </main>
 
 <footer>
   <div class="container">
-    <p>このデモはクライアント側だけで動作する簡易版です。実運用では国税庁法人番号API・公開HP情報から収集したデータと、Claude API等を用いた埋め込み類似度ベースのスコアリングを使います。</p>
+    <p>このデモはクライアント側だけで動作する簡易版です。商材判別はルールベース分類器、本番ではClaude APIに差し替えて埋め込み類似度ベースのスコアリングを使います。</p>
     <p><a href="https://github.com/playmark0227-svg/tell">GitHubリポジトリ</a></p>
   </div>
 </footer>
