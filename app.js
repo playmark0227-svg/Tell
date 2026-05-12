@@ -472,6 +472,153 @@ const PRODUCT_CATEGORIES = [
   },
 ];
 
+/* ============ Signal Extraction ============ */
+const SIGNAL_RULES = [
+  { sig: 'has_office', re: /オフィス|事務所|本社|支店|本部/ },
+  { sig: 'has_factory', re: /工場|製造|現場.*作業/ },
+  { sig: 'has_store', re: /店舗|チェーン/ },
+  { sig: 'has_field_work', re: /直行直帰|外回り|訪問/ },
+  { sig: 'has_remote', re: /リモート|テレワーク|在宅/ },
+  { sig: 'has_24h', re: /24時間|深夜/ },
+  { sig: 'has_legacy', re: /SAP|基幹システム|刷新済|導入済/ },
+  { sig: 'pain_recruitment', re: /採用|人手不足|離職|人材育成/ },
+  { sig: 'pain_efficiency', re: /煩雑|属人|手作業|Excel|紙/ },
+  { sig: 'pain_cost', re: /コスト|削減|電気代|高騰|仕入/ },
+  { sig: 'pain_compliance', re: /コンプライアンス|機密|個人情報|労務/ },
+  { sig: 'pain_sales', re: /営業|商談|新規開拓|集客/ },
+  { sig: 'pain_succession', re: /後継者|事業承継/ },
+  { sig: 'pain_funding', re: /資金繰り|売掛/ },
+  { sig: 'pain_old_hp', re: /古いHP|ホームページ刷新|スマホ未対応/ },
+  { sig: 'pain_welfare', re: /福利厚生|従業員満足|定着/ },
+  { sig: 'industry_b2c_retail', re: /小売|店舗|EC|通販/ },
+  { sig: 'industry_b2b_service', re: /受託|コンサル|SIer/ },
+];
+
+const SIZE_SIGNALS = {
+  small: 'size_small',
+  mid: 'size_mid',
+  large: 'size_large',
+};
+
+function extractCompanySignals(company) {
+  const text = company.description + ' ' + (company.keywords || []).join(' ');
+  const signals = SIGNAL_RULES.filter(r => r.re.test(text)).map(r => r.sig);
+  if (company.size) signals.push(SIZE_SIGNALS[company.size]);
+  return new Set(signals);
+}
+
+/* ============ AI Strategy (per product) ============ */
+const CATEGORY_STRATEGY = {
+  water_server: {
+    target_signals: ['has_office', 'pain_welfare', 'pain_recruitment'],
+    avoid_signals: ['has_factory', 'has_field_work'],
+    persona: 'オフィスワーク中心の中小〜中規模企業、来客対応や福利厚生強化に関心がある',
+    decision_maker: '総務部長・経営者・人事',
+    motivation: '従業員満足度向上、来客対応、ペットボトル廃棄削減、福利厚生のアピール',
+    avoid: '工場・現場直行直帰中心で本社事務所が小規模、既設済',
+  },
+  attendance: {
+    target_signals: ['pain_efficiency', 'has_field_work', 'has_24h'],
+    avoid_signals: ['has_legacy'],
+    persona: '紙やExcelでの勤怠運用が残る中小企業、シフト・直行直帰が多い業種',
+    decision_maker: '総務人事・経営者',
+    motivation: '法令対応、集計工数削減、不正打刻防止',
+    avoid: '基幹システムやSAPで人事まで統合済の大企業',
+  },
+  electricity: {
+    target_signals: ['pain_cost', 'has_factory', 'has_24h'],
+    avoid_signals: [],
+    persona: '電気代が経営インパクトに直結する製造・小売・宿泊',
+    decision_maker: '経営者・経理',
+    motivation: '電気代削減、ESG/脱炭素',
+    avoid: '既に新電力切替済み・大規模PPA契約済',
+  },
+  solar: {
+    target_signals: ['pain_cost', 'has_factory'],
+    avoid_signals: [],
+    persona: '工場・倉庫の屋根を活用できる製造・物流・農業',
+    decision_maker: '経営者・工場長',
+    motivation: '電気代削減、脱炭素、BCP対策',
+    avoid: '賃借物件・狭小敷地',
+  },
+  pos_payment: {
+    target_signals: ['has_store', 'industry_b2c_retail'],
+    avoid_signals: ['has_legacy'],
+    persona: '店舗オペレーションを持つ小売・飲食・サービス',
+    decision_maker: '経営者・店長',
+    motivation: 'インバウンド対応、会計効率、キャッシュレス比率',
+    avoid: 'POS既に最新版に刷新済',
+  },
+  factoring_loan: {
+    target_signals: ['pain_funding'],
+    avoid_signals: [],
+    persona: '売掛サイクル長期化が課題、銀行借入が難しい中小',
+    decision_maker: '経営者・経理',
+    motivation: '資金繰り改善、新規取引拡大',
+    avoid: '上場企業・大手',
+  },
+  ma: {
+    target_signals: ['pain_succession'],
+    avoid_signals: [],
+    persona: '60代以上のオーナー経営、後継者不在の中小',
+    decision_maker: '経営者本人',
+    motivation: '事業承継・出口戦略',
+    avoid: 'グループ会社や上場',
+  },
+  seo_meo: {
+    target_signals: ['has_store', 'pain_old_hp', 'pain_sales'],
+    avoid_signals: [],
+    persona: '店舗・拠点で地域集客が必要な業種、ローカル検索からの来店が売上に直結',
+    decision_maker: '経営者・店長・マーケ',
+    motivation: '来店客数増、口コミ管理',
+    avoid: '内部にマーケ部隊あり、SEO代理店契約済',
+  },
+  security_camera: {
+    target_signals: ['has_store', 'has_factory'],
+    avoid_signals: [],
+    persona: '店舗・工場・施設で防犯・労務管理が必要',
+    decision_maker: '経営者・施設管理',
+    motivation: '万引き対策、入退室管理、労務エビデンス',
+    avoid: '最新IPカメラ導入済',
+  },
+  recruiting: {
+    target_signals: ['pain_recruitment'],
+    avoid_signals: [],
+    persona: '採用に苦戦している中堅企業、応募数や母集団形成が課題',
+    decision_maker: '人事・経営者',
+    motivation: '応募数増、ミスマッチ削減',
+    avoid: 'タレントマネジメント完全運用中',
+  },
+};
+
+function inferStrategy(category, icp) {
+  if (CATEGORY_STRATEGY[category.id]) return CATEGORY_STRATEGY[category.id];
+  return {
+    target_signals: [],
+    avoid_signals: [],
+    persona: `${icp.industries.slice(0,3).join('・')}の${icp.sizes.map(s=>({small:'小規模',mid:'中規模',large:'大規模'}[s])).join('・')}企業`,
+    decision_maker: '経営者・部門長',
+    motivation: icp.pains.join('・'),
+    avoid: icp.anti_patterns.length ? '既存システム導入済み・カテゴリ競合あり' : '特になし',
+  };
+}
+
+/* ============ Generic intent analysis (any product) ============ */
+const INTENT_RULES = [
+  { sig: 'target_office', re: /オフィス|事務所|デスク|本社/, boost: 'has_office' },
+  { sig: 'target_factory', re: /工場|製造|現場/, boost: 'has_factory' },
+  { sig: 'target_store', re: /店舗|チェーン|小売/, boost: 'has_store' },
+  { sig: 'target_remote', re: /リモート|テレワーク/, boost: 'has_remote' },
+  { sig: 'target_b2b', re: /法人向け|B2B/, boost: 'industry_b2b_service' },
+  { sig: 'pain_cost_focus', re: /削減|コスト/, boost: 'pain_cost' },
+  { sig: 'pain_efficiency_focus', re: /効率|自動化|DX/, boost: 'pain_efficiency' },
+  { sig: 'pain_recruit_focus', re: /採用|定着|福利厚生/, boost: 'pain_recruitment' },
+];
+
+function analyzeProductIntent(text) {
+  return INTENT_RULES.filter(r => r.re.test(text)).map(r => r.boost);
+}
+
 function classifyProduct(text) {
   const scores = PRODUCT_CATEGORIES.map(cat => {
     const matchCount = cat.patterns.filter(p => p.test(text)).length;
@@ -513,25 +660,26 @@ const WEIGHTS = {
   anti: -30,
 };
 
-function scoreCompany(company, icp) {
+function scoreCompany(company, icp, strategy, intentSignals) {
   let score = 0;
   const reasons = [];
+  const signals = extractCompanySignals(company);
 
   if (icp.industries.includes(company.industry)) {
     score += WEIGHTS.industry;
-    reasons.push(`業種「${company.industry}」が想定ターゲット`);
+    reasons.push(`業種「${company.industry}」がターゲット`);
   }
 
   if (icp.sizes.includes(company.size)) {
     score += WEIGHTS.size;
-    reasons.push(`規模が想定範囲（${company.employees}名）`);
+    reasons.push(`規模適合（${company.employees}名）`);
   }
 
   const desc = company.description + ' ' + company.keywords.join(' ');
   const matchedKeywords = icp.keywords.filter(kw => desc.includes(kw));
   if (matchedKeywords.length > 0) {
     score += Math.min(matchedKeywords.length * WEIGHTS.keyword_each, WEIGHTS.keyword_cap);
-    reasons.push(`関連キーワード: ${matchedKeywords.join('・')}`);
+    reasons.push(`キーワード一致: ${matchedKeywords.join('・')}`);
   }
 
   const matchedPains = icp.pains.filter(pain => {
@@ -543,17 +691,76 @@ function scoreCompany(company, icp) {
     reasons.push('想定課題に合致');
   }
 
+  // 意味シグナルマッチ（戦略 + 商材文脈）
+  const wanted = new Set([...(strategy?.target_signals || []), ...(intentSignals || [])]);
+  const avoided = new Set(strategy?.avoid_signals || []);
+  const matchedSignals = [...wanted].filter(s => signals.has(s));
+  if (matchedSignals.length > 0) {
+    score += matchedSignals.length * 8;
+    reasons.push(`購買シグナル: ${matchedSignals.map(sigLabel).join('・')}`);
+  }
+  const hitAvoid = [...avoided].filter(s => signals.has(s));
+  if (hitAvoid.length > 0) {
+    score -= hitAvoid.length * 15;
+    reasons.push(`アンチシグナル: ${hitAvoid.map(sigLabel).join('・')}（減点）`);
+  }
+
   const antiHit = (icp.anti_patterns || []).some(p => p.test(company.description));
   if (antiHit) {
     score += WEIGHTS.anti;
-    reasons.push('競合・既存導入の兆候あり（減点）');
+    reasons.push('競合・既存導入の兆候（減点）');
   }
 
+  const final = Math.max(0, Math.min(100, score));
   return {
     ...company,
-    score: Math.max(0, Math.min(100, score)),
+    score: final,
+    signals: [...signals],
     reasoning: reasons.join(' / ') || '明確な根拠なし',
+    aiComment: buildAIComment(company, icp, strategy, signals, final),
   };
+}
+
+const SIG_LABELS = {
+  has_office: 'オフィスあり',
+  has_factory: '工場あり',
+  has_store: '店舗運営',
+  has_field_work: '直行直帰',
+  has_remote: 'リモート対応',
+  has_24h: '24時間稼働',
+  has_legacy: '既存システム',
+  pain_recruitment: '採用課題',
+  pain_efficiency: '効率化課題',
+  pain_cost: 'コスト課題',
+  pain_compliance: 'コンプラ課題',
+  pain_sales: '営業課題',
+  pain_succession: '事業承継',
+  pain_funding: '資金繰り',
+  pain_old_hp: 'HP刷新需要',
+  pain_welfare: '福利厚生需要',
+  size_small: '小規模',
+  size_mid: '中規模',
+  size_large: '大規模',
+  industry_b2c_retail: 'B2C小売',
+  industry_b2b_service: 'B2B受託',
+};
+function sigLabel(s) { return SIG_LABELS[s] || s; }
+
+function buildAIComment(company, icp, strategy, signals, score) {
+  if (score >= 70) {
+    const why = [];
+    if (signals.has('has_office') && strategy?.target_signals?.includes('has_office')) why.push('オフィスワーク中心で導入の物理的余地がある');
+    if (signals.has('pain_recruitment')) why.push('採用・定着に課題があり、間接的な福利厚生・効率化提案が刺さりやすい');
+    if (signals.has('pain_efficiency')) why.push('属人化・紙運用の解消余地が大きい');
+    if (signals.has('pain_cost')) why.push('コスト感度が高く、削減提案が刺さる');
+    if (signals.has('pain_succession')) why.push('事業承継期で経営者本人が判断できる');
+    if (icp.industries.includes(company.industry)) why.push(`${company.industry}は主力ターゲット業界`);
+    return why.length ? `この企業は${why.slice(0,3).join('、')}ため、商談化の確度が高い。${strategy?.decision_maker||'経営者'}への直接アプローチを推奨。` : `業種・規模・課題が想定ICPに合致。`;
+  }
+  if (score >= 40) {
+    return `部分的にICPに合致するが、決め手に欠ける。${strategy?.motivation||'価値訴求'}を冒頭で簡潔に伝え、反応を見て深掘りすることを推奨。`;
+  }
+  return `想定ICPから外れる可能性が高い。優先度は低く、無理な架電は控えるべき。`;
 }
 
 function scoreClass(score) {
@@ -673,7 +880,10 @@ function renderRow(c) {
           <option value="meeting" ${status==='meeting'?'selected':''}>商談化</option>
         </select>
       </td>
-      <td class="reasoning">${c.reasoning}</td>
+      <td class="reasoning">
+        <div class="ai-comment">${c.aiComment || ''}</div>
+        <div class="ai-reason">${c.reasoning}</div>
+      </td>
     </tr>
   `;
 }
@@ -700,6 +910,7 @@ const store = {
   status: {},
   notes: {},
   history: [],
+  customCompanies: [],
   opts: { excludeDnc: true, savedOnly: false },
 };
 
@@ -713,6 +924,7 @@ function loadStore() {
     store.status = d.status || {};
     store.notes = d.notes || {};
     store.history = d.history || [];
+    store.customCompanies = d.customCompanies || [];
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -724,6 +936,7 @@ function saveStore() {
     status: store.status,
     notes: store.notes,
     history: store.history,
+    customCompanies: store.customCompanies,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -820,6 +1033,8 @@ function renderSidebar() {
   document.getElementById('badge-saved').textContent = savedCompanies.length;
   document.getElementById('badge-dnc').textContent = dncCompanies.length;
   document.getElementById('badge-history').textContent = store.history.length;
+  const badgeCustom = document.getElementById('badge-custom');
+  if (badgeCustom) badgeCustom.textContent = store.customCompanies.length;
 
   document.getElementById('saved-list').innerHTML = savedCompanies.length === 0
     ? '<div class="empty">まだ保存なし</div>'
@@ -976,20 +1191,60 @@ function importJson(file) {
 function runPipeline(input) {
   state.classification = classifyProduct(input);
   state.icp = state.classification.category.icp;
-  state.scored = state.companies
-    .map(c => scoreCompany(c, state.icp))
+  state.strategy = inferStrategy(state.classification.category, state.icp);
+  state.intentSignals = analyzeProductIntent(input);
+  const allCompanies = [...state.companies, ...store.customCompanies];
+  state.scored = allCompanies
+    .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
     .sort((a, b) => b.score - a.score);
   renderClassification(state.classification);
+  renderStrategy(state.strategy, state.scored);
   renderICP(state.icp);
   renderFilters();
   renderResults();
   renderSidebar();
 }
 
+function renderStrategy(strategy, scored) {
+  const section = document.getElementById('strategy-section');
+  const display = document.getElementById('strategy-display');
+  const highCount = scored.filter(c => c.score >= 70).length;
+  const midCount = scored.filter(c => c.score >= 40 && c.score < 70).length;
+  display.innerHTML = `
+    <div class="strategy-grid">
+      <div class="strategy-card">
+        <div class="label">🎯 想定ペルソナ</div>
+        <div>${strategy.persona}</div>
+      </div>
+      <div class="strategy-card">
+        <div class="label">👤 想定決裁者</div>
+        <div>${strategy.decision_maker}</div>
+      </div>
+      <div class="strategy-card">
+        <div class="label">💡 購入動機</div>
+        <div>${strategy.motivation}</div>
+      </div>
+      <div class="strategy-card warn">
+        <div class="label">🚫 避けるべき対象</div>
+        <div>${strategy.avoid}</div>
+      </div>
+    </div>
+    <div class="strategy-summary">
+      <strong>AIの結論：</strong>
+      ${highCount > 0
+        ? `データベース内で<strong>${highCount}社</strong>が高適合（適合度70+）。中程度の見込みも含めると${highCount + midCount}社が対象候補です。`
+        : midCount > 0
+        ? `高適合の企業は見つかりませんでしたが、<strong>${midCount}社</strong>が中程度の見込みです。商材説明をもう少し具体的にすると精度が上がります。`
+        : `現在のデータベースでは適合企業が少なめです。サイドバーから自社で収集した企業を追加するか、商材説明を変えて再分析してください。`}
+    </div>
+  `;
+  section.hidden = false;
+}
+
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512e');
+    const res = await fetch('data/companies.json?v=20260512f');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
@@ -1045,6 +1300,39 @@ async function init() {
   document.getElementById('import-file').addEventListener('change', e => {
     if (e.target.files[0]) importJson(e.target.files[0]);
     e.target.value = '';
+  });
+
+  document.getElementById('cc-add').addEventListener('click', () => {
+    const name = document.getElementById('cc-name').value.trim();
+    if (!name) { alert('会社名を入力してください'); return; }
+    const phone = document.getElementById('cc-phone').value.trim() || '(未登録)';
+    const industry = document.getElementById('cc-industry').value || 'サービス業';
+    const size = document.getElementById('cc-size').value || 'small';
+    const description = document.getElementById('cc-desc').value.trim() || '';
+    const employees = { small: 30, mid: 150, large: 500 }[size];
+    const company = {
+      id: 100000 + store.customCompanies.length + 1,
+      name, phone, industry, prefecture: '-', size, employees, description,
+      keywords: description.split(/[\s、,。]+/).filter(w => w.length >= 2),
+      custom: true,
+    };
+    store.customCompanies.push(company);
+    saveStore();
+    ['cc-name','cc-phone','cc-desc'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('cc-industry').value = '';
+    document.getElementById('cc-size').value = '';
+    renderSidebar();
+    if (state.scored.length > 0) {
+      const input = document.getElementById('product-input').value.trim();
+      if (input) runPipeline(input);
+    }
+  });
+  document.getElementById('cc-clear').addEventListener('click', () => {
+    if (!confirm('追加した企業を全削除しますか？')) return;
+    store.customCompanies = [];
+    saveStore(); renderSidebar();
+    const input = document.getElementById('product-input').value.trim();
+    if (input && state.scored.length > 0) runPipeline(input);
   });
 
   document.getElementById('clear-history').addEventListener('click', () => {

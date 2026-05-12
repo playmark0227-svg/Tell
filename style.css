@@ -141,7 +141,7 @@ body {
 .file-label { display: block; }
 .file-label input { display: none; }
 
-#search-box {
+#search-box, .sidebar input[type=text], .sidebar select, .sidebar textarea {
   width: 100%;
   background: rgba(255,255,255,0.06);
   border: 1px solid var(--sidebar-border);
@@ -150,9 +150,12 @@ body {
   font-size: 13px;
   border-radius: 6px;
   font-family: inherit;
+  margin-bottom: 6px;
 }
 
-#search-box::placeholder { color: var(--sidebar-muted); }
+.sidebar textarea { resize: vertical; }
+#search-box::placeholder, .sidebar input::placeholder, .sidebar textarea::placeholder { color: var(--sidebar-muted); }
+.sidebar select option { color: var(--text); }
 
 .dash-grid {
   display: grid;
@@ -370,6 +373,50 @@ button.ghost { background: transparent; color: var(--text); border: 1px solid va
 .confidence.medium { background: var(--mid); }
 .confidence.low { background: var(--low); }
 .classification-alt { margin-top: 8px; font-size: 13px; color: var(--muted); }
+
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.strategy-card {
+  background: #eff6ff;
+  border-left: 3px solid var(--primary);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.strategy-card.warn {
+  background: #fef2f2;
+  border-left-color: var(--danger);
+}
+.strategy-card .label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.strategy-summary {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.ai-comment {
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 4px;
+  padding: 4px 6px;
+  background: #eff6ff;
+  border-left: 2px solid var(--primary);
+  border-radius: 2px;
+}
+.ai-reason {
+  font-size: 11px;
+  color: var(--muted);
+}
 
 .table-wrap { overflow-x: auto; }
 

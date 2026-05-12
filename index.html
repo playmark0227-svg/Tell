@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング（デモ）</title>
-<link rel="stylesheet" href="style.css?v=20260512e">
+<link rel="stylesheet" href="style.css?v=20260512f">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -55,6 +55,39 @@
       <div class="kv"><span>繋がった</span><strong id="ana-connected">0</strong></div>
       <div class="kv"><span>商談化率</span><strong id="ana-rate">0%</strong></div>
       <div class="kv"><span>平均スコア(架電先)</span><strong id="ana-avg-score">-</strong></div>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>➕ 企業を追加</span><span class="badge" id="badge-custom">0</span></div>
+    <div class="side-body">
+      <input type="text" id="cc-name" placeholder="会社名（必須）">
+      <input type="text" id="cc-phone" placeholder="電話番号">
+      <select id="cc-industry">
+        <option value="">業種選択</option>
+        <option>製造業</option>
+        <option>建設業</option>
+        <option>卸売・小売業</option>
+        <option>飲食業</option>
+        <option>運輸業</option>
+        <option>情報通信業</option>
+        <option>金融・保険業</option>
+        <option>不動産業</option>
+        <option>医療・福祉</option>
+        <option>教育・学習支援</option>
+        <option>宿泊・サービス業</option>
+        <option>サービス業</option>
+        <option>農林水産業</option>
+      </select>
+      <select id="cc-size">
+        <option value="">規模選択</option>
+        <option value="small">〜50名</option>
+        <option value="mid">51〜300名</option>
+        <option value="large">301名〜</option>
+      </select>
+      <textarea id="cc-desc" rows="2" placeholder="事業内容・課題のメモ（任意。AIマッチング精度向上）"></textarea>
+      <button class="side-btn" id="cc-add">追加</button>
+      <button class="side-btn danger" id="cc-clear">全削除</button>
     </div>
   </div>
 
@@ -142,13 +175,18 @@
     <div id="classification-display"></div>
   </section>
 
+  <section class="panel" id="strategy-section" hidden>
+    <h2>3. AI戦略分析 <span class="muted">— 誰が買うか</span></h2>
+    <div id="strategy-display"></div>
+  </section>
+
   <section class="panel" id="icp-section" hidden>
-    <h2>3. 生成されたICP（理想顧客プロファイル）</h2>
+    <h2>4. 理想顧客プロファイル（ICP）</h2>
     <div id="icp-display"></div>
   </section>
 
   <section class="panel" id="filter-section" hidden>
-    <h2>4. 絞り込み</h2>
+    <h2>5. 絞り込み</h2>
     <div class="filters">
       <label>業種
         <select id="filter-industry"><option value="">すべて</option></select>
@@ -172,7 +210,7 @@
   </section>
 
   <section class="panel" id="results-section" hidden>
-    <h2>5. 結果 <span id="result-count" class="muted"></span></h2>
+    <h2>6. 結果 <span id="result-count" class="muted"></span></h2>
     <div class="table-wrap">
       <table id="results-table">
         <thead>
@@ -227,6 +265,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260512e"></script>
+<script src="app.js?v=20260512f"></script>
 </body>
 </html>
