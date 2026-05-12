@@ -1,0 +1,222 @@
+[
+  {
+    "id": 1,
+    "name": "サンプル製作所株式会社",
+    "industry": "製造業",
+    "prefecture": "東京都",
+    "size": "mid",
+    "employees": 120,
+    "phone": "03-XXXX-1001",
+    "description": "金属加工部品の製造。少量多品種、紙の作業日報とタイムカードで現場管理。シフト管理に手間がかかっている。",
+    "keywords": ["製造", "金属加工", "現場管理", "タイムカード", "シフト"]
+  },
+  {
+    "id": 2,
+    "name": "ダミー流通株式会社",
+    "industry": "卸売・小売業",
+    "prefecture": "大阪府",
+    "size": "mid",
+    "employees": 80,
+    "phone": "06-XXXX-1002",
+    "description": "食品の卸売。配送ドライバーの直行直帰が多く、勤怠の打刻漏れが課題。",
+    "keywords": ["卸売", "食品", "配送", "勤怠", "打刻"]
+  },
+  {
+    "id": 3,
+    "name": "テスト食品サービス株式会社",
+    "industry": "飲食業",
+    "prefecture": "東京都",
+    "size": "small",
+    "employees": 35,
+    "phone": "03-XXXX-1003",
+    "description": "居酒屋チェーン5店舗運営。アルバイト中心でシフト作成と勤怠集計が煩雑。",
+    "keywords": ["飲食", "居酒屋", "アルバイト", "シフト", "勤怠"]
+  },
+  {
+    "id": 4,
+    "name": "架空建設株式会社",
+    "industry": "建設業",
+    "prefecture": "愛知県",
+    "size": "mid",
+    "employees": 150,
+    "phone": "052-XXX-1004",
+    "description": "土木建築。現場別の作業時間集計を紙で管理。安全管理と工数管理を一元化したい。",
+    "keywords": ["建設", "土木", "現場", "工数"]
+  },
+  {
+    "id": 5,
+    "name": "サンプルITソリューション株式会社",
+    "industry": "情報通信業",
+    "prefecture": "東京都",
+    "size": "small",
+    "employees": 25,
+    "phone": "03-XXXX-1005",
+    "description": "受託開発中心のSIer。リモート勤務が多くPC打刻ベースの勤怠管理を導入済み。",
+    "keywords": ["IT", "SIer", "リモート", "勤怠", "PC打刻"]
+  },
+  {
+    "id": 6,
+    "name": "ダミー介護サービス株式会社",
+    "industry": "医療・福祉",
+    "prefecture": "神奈川県",
+    "size": "mid",
+    "employees": 90,
+    "phone": "045-XXX-1006",
+    "description": "訪問介護事業所3拠点。直行直帰のヘルパー勤怠と訪問時間記録を統合管理したい。",
+    "keywords": ["介護", "訪問", "ヘルパー", "勤怠", "シフト"]
+  },
+  {
+    "id": 7,
+    "name": "テスト商事株式会社",
+    "industry": "卸売・小売業",
+    "prefecture": "東京都",
+    "size": "large",
+    "employees": 450,
+    "phone": "03-XXXX-1007",
+    "description": "総合商社。基幹システム導入済みで人事システムも刷新済み。",
+    "keywords": ["商社", "総合", "基幹システム"]
+  },
+  {
+    "id": 8,
+    "name": "架空運送株式会社",
+    "industry": "運輸業",
+    "prefecture": "埼玉県",
+    "size": "mid",
+    "employees": 110,
+    "phone": "048-XXX-1008",
+    "description": "中距離トラック輸送。改善基準告示対応で乗務員の労働時間管理を強化したい。",
+    "keywords": ["運輸", "トラック", "ドライバー", "労働時間", "改善基準"]
+  },
+  {
+    "id": 9,
+    "name": "サンプルクリニック医療法人",
+    "industry": "医療・福祉",
+    "prefecture": "千葉県",
+    "size": "small",
+    "employees": 18,
+    "phone": "043-XXX-1009",
+    "description": "個人経営クリニック。スタッフのシフトをExcelで管理。",
+    "keywords": ["医療", "クリニック", "シフト", "Excel"]
+  },
+  {
+    "id": 10,
+    "name": "ダミー金融株式会社",
+    "industry": "金融・保険業",
+    "prefecture": "東京都",
+    "size": "large",
+    "employees": 800,
+    "phone": "03-XXXX-1010",
+    "description": "信用金庫。コンプライアンス強化で勤怠管理も厳格化。既存システムは独自開発。",
+    "keywords": ["金融", "信用金庫", "コンプライアンス"]
+  },
+  {
+    "id": 11,
+    "name": "テスト印刷株式会社",
+    "industry": "製造業",
+    "prefecture": "京都府",
+    "size": "small",
+    "employees": 42,
+    "phone": "075-XXX-1011",
+    "description": "オフセット印刷。深夜稼働あり、変形労働時間制で勤怠管理が複雑。",
+    "keywords": ["印刷", "製造", "深夜", "変形労働", "勤怠"]
+  },
+  {
+    "id": 12,
+    "name": "架空アパレル株式会社",
+    "industry": "卸売・小売業",
+    "prefecture": "東京都",
+    "size": "mid",
+    "employees": 200,
+    "phone": "03-XXXX-1012",
+    "description": "アパレル小売15店舗。店舗スタッフのシフトと本部勤怠を統合したい。",
+    "keywords": ["アパレル", "小売", "店舗", "シフト"]
+  },
+  {
+    "id": 13,
+    "name": "サンプル教育サービス株式会社",
+    "industry": "教育・学習支援",
+    "prefecture": "福岡県",
+    "size": "small",
+    "employees": 30,
+    "phone": "092-XXX-1013",
+    "description": "学習塾運営。講師は時給制、コマ単位の勤怠管理が必要。",
+    "keywords": ["教育", "学習塾", "講師", "時給", "勤怠"]
+  },
+  {
+    "id": 14,
+    "name": "ダミー不動産株式会社",
+    "industry": "不動産業",
+    "prefecture": "東京都",
+    "size": "small",
+    "employees": 22,
+    "phone": "03-XXXX-1014",
+    "description": "賃貸仲介。営業担当の外回りが多い。",
+    "keywords": ["不動産", "賃貸", "営業", "外回り"]
+  },
+  {
+    "id": 15,
+    "name": "テスト農産株式会社",
+    "industry": "農林水産業",
+    "prefecture": "北海道",
+    "size": "small",
+    "employees": 28,
+    "phone": "011-XXX-1015",
+    "description": "野菜の生産加工。季節雇用が多く繁忙期の勤怠集計が大変。",
+    "keywords": ["農業", "生産", "季節雇用", "勤怠"]
+  },
+  {
+    "id": 16,
+    "name": "架空ホテル株式会社",
+    "industry": "宿泊・サービス業",
+    "prefecture": "沖縄県",
+    "size": "mid",
+    "employees": 130,
+    "phone": "098-XXX-1016",
+    "description": "リゾートホテル。24時間シフト体制でフロント・客室・レストランの勤怠を一元管理したい。",
+    "keywords": ["宿泊", "ホテル", "シフト", "24時間"]
+  },
+  {
+    "id": 17,
+    "name": "サンプル広告株式会社",
+    "industry": "情報通信業",
+    "prefecture": "東京都",
+    "size": "mid",
+    "employees": 60,
+    "phone": "03-XXXX-1017",
+    "description": "Web広告代理店。クライアント別工数管理が課題。勤怠は既存ツール導入済み。",
+    "keywords": ["広告", "Web", "工数"]
+  },
+  {
+    "id": 18,
+    "name": "ダミー製薬株式会社",
+    "industry": "製造業",
+    "prefecture": "大阪府",
+    "size": "large",
+    "employees": 1200,
+    "phone": "06-XXXX-1018",
+    "description": "後発医薬品メーカー。基幹システムSAPで人事も統合。",
+    "keywords": ["製造", "製薬", "SAP"]
+  },
+  {
+    "id": 19,
+    "name": "テスト清掃サービス株式会社",
+    "industry": "サービス業",
+    "prefecture": "兵庫県",
+    "size": "mid",
+    "employees": 75,
+    "phone": "078-XXX-1019",
+    "description": "ビル清掃。現場直行直帰のパート従業員多数。打刻方法を見直したい。",
+    "keywords": ["清掃", "サービス", "パート", "直行直帰", "打刻"]
+  },
+  {
+    "id": 20,
+    "name": "架空コンサルティング株式会社",
+    "industry": "サービス業",
+    "prefecture": "東京都",
+    "size": "small",
+    "employees": 15,
+    "phone": "03-XXXX-1020",
+    "description": "経営コンサル。社員数が少なく勤怠管理は手書きで足りている。",
+    "keywords": ["コンサル", "経営"]
+  }
+]

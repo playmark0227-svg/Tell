@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tell - B2B営業リスト適合度スコアリング（デモ）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Tell <span class="tag">デモ</span></h1>
+    <p class="lead">商材を入力すると、AIが理想顧客プロファイル（ICP）を生成し、公開法人データから適合度順に並べ替えます。</p>
+  </div>
+</header>
+
+<div class="notice container">
+  <strong>⚠️ デモ・サンプルデータ</strong>
+  表示中の企業データはすべて架空です。本番運用時は以下を厳守してください：
+  <ul>
+    <li>収集対象は<strong>法人の公開連絡先のみ</strong>（個人宅・個人携帯は対象外）</li>
+    <li>特定商取引法：事業者名・勧誘目的の明示、再勧誘禁止</li>
+    <li>個人情報保護法：担当者個人名と紐づく情報は個人情報として扱う</li>
+    <li>robots.txt遵守、レート制限（1ドメイン1req/sec以下）</li>
+    <li>架電拒否（DNC）リストを必ず除外してから架電</li>
+  </ul>
+</div>
+
+<main class="container">
+  <section class="panel">
+    <h2>1. 商材を入力</h2>
+    <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
+    <button id="generate-icp">ICPを生成して検索</button>
+  </section>
+
+  <section class="panel" id="icp-section" hidden>
+    <h2>2. 生成されたICP（理想顧客プロファイル）</h2>
+    <div id="icp-display"></div>
+  </section>
+
+  <section class="panel" id="filter-section" hidden>
+    <h2>3. 絞り込み</h2>
+    <div class="filters">
+      <label>業種
+        <select id="filter-industry">
+          <option value="">すべて</option>
+        </select>
+      </label>
+      <label>都道府県
+        <select id="filter-prefecture">
+          <option value="">すべて</option>
+        </select>
+      </label>
+      <label>従業員規模
+        <select id="filter-size">
+          <option value="">すべて</option>
+          <option value="small">〜50名</option>
+          <option value="mid">51〜300名</option>
+          <option value="large">301名〜</option>
+        </select>
+      </label>
+      <label>最低スコア
+        <input type="range" id="filter-score" min="0" max="100" value="40">
+        <span id="filter-score-value">40</span>
+      </label>
+    </div>
+  </section>
+
+  <section class="panel" id="results-section" hidden>
+    <h2>4. 結果 <span id="result-count" class="muted"></span></h2>
+    <table id="results-table">
+      <thead>
+        <tr>
+          <th>適合度</th>
+          <th>会社名</th>
+          <th>業種</th>
+          <th>所在地</th>
+          <th>規模</th>
+          <th>代表電話</th>
+          <th>根拠</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <div class="container">
+    <p>このデモはクライアント側だけで動作する簡易版です。実運用では国税庁法人番号API・公開HP情報から収集したデータと、Claude API等を用いた埋め込み類似度ベースのスコアリングを使います。</p>
+    <p><a href="https://github.com/playmark0227-svg/tell">GitHubリポジトリ</a></p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
