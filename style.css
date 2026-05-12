@@ -20,6 +20,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; }
 
 body {
@@ -450,6 +451,7 @@ footer {
 footer a { color: var(--primary); }
 
 /* ============ Modal ============ */
+.modal[hidden] { display: none !important; }
 .modal {
   position: fixed;
   inset: 0;

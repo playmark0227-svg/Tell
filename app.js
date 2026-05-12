@@ -989,7 +989,7 @@ function runPipeline(input) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512d');
+    const res = await fetch('data/companies.json?v=20260512e');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
@@ -1083,6 +1083,15 @@ async function init() {
 
   const scriptModal = document.getElementById('script-modal');
   document.getElementById('script-close').addEventListener('click', () => { scriptModal.hidden = true; });
+
+  // 背景クリックで閉じる
+  [noteModal, scriptModal].forEach(m => {
+    m.addEventListener('click', e => { if (e.target === m) m.hidden = true; });
+  });
+  // ESCキーで閉じる
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { noteModal.hidden = true; scriptModal.hidden = true; }
+  });
   document.getElementById('script-copy').addEventListener('click', () => {
     const text = document.getElementById('script-text').textContent;
     navigator.clipboard.writeText(text).then(() => {
