@@ -856,8 +856,8 @@ function renderRow(c) {
   const trClass = [isSaved ? 'saved-row' : '', isDnc ? 'dnc-row' : ''].filter(Boolean).join(' ');
   return `
     <tr class="${trClass}" data-id="${c.id}">
-      <td><span class="score ${scoreClass(c.score)}">${c.score}</span></td>
-      <td>
+      <td data-label="適合度"><span class="score ${scoreClass(c.score)}">${c.score}</span></td>
+      <td data-label="操作">
         <div class="row-actions">
           <button class="act-save ${isSaved ? 'active' : ''}" title="保存">★</button>
           <button class="act-dnc ${isDnc ? 'dnc-on' : ''}" title="DNC">🚫</button>
@@ -866,12 +866,12 @@ function renderRow(c) {
           <button class="act-script" title="スクリプト">📜</button>
         </div>
       </td>
-      <td>${c.name}</td>
-      <td>${c.industry}</td>
-      <td>${c.prefecture}</td>
-      <td>${c.employees}名</td>
-      <td class="phone"><a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a></td>
-      <td>
+      <td data-label="会社名">${c.name}</td>
+      <td data-label="業種">${c.industry}</td>
+      <td data-label="所在地">${c.prefecture}</td>
+      <td data-label="規模">${c.employees}名</td>
+      <td data-label="電話" class="phone"><a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a></td>
+      <td data-label="状況">
         <select class="status-select" data-id="${c.id}">
           <option value="">未架電</option>
           <option value="connected" ${status==='connected'?'selected':''}>繋がった</option>
@@ -880,7 +880,7 @@ function renderRow(c) {
           <option value="meeting" ${status==='meeting'?'selected':''}>商談化</option>
         </select>
       </td>
-      <td class="reasoning">
+      <td class="reasoning no-label">
         <div class="ai-comment">${c.aiComment || ''}</div>
         <div class="ai-reason">${c.reasoning}</div>
       </td>
@@ -1244,7 +1244,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512f');
+    const res = await fetch('data/companies.json?v=20260512g');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
@@ -1353,11 +1353,22 @@ async function init() {
     });
   });
 
+  const sidebarEl = document.getElementById('sidebar');
   document.getElementById('sidebar-toggle').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.add('open');
+    sidebarEl.classList.add('open');
+    document.body.style.overflow = 'hidden';
   });
   document.getElementById('sidebar-close').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.remove('open');
+    sidebarEl.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+  document.addEventListener('click', e => {
+    if (sidebarEl.classList.contains('open') &&
+        !sidebarEl.contains(e.target) &&
+        !e.target.closest('#sidebar-toggle')) {
+      sidebarEl.classList.remove('open');
+      document.body.style.overflow = '';
+    }
   });
 
   const noteModal = document.getElementById('note-modal');
