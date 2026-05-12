@@ -635,21 +635,344 @@ function applyFilters() {
 function renderResults() {
   const filtered = applyFilters();
   const tbody = document.querySelector('#results-table tbody');
-  tbody.innerHTML = filtered.map(c => `
-    <tr>
+  tbody.innerHTML = filtered.map(c => renderRow(c)).join('');
+  document.getElementById('result-count').textContent = `（${filtered.length}件）`;
+  document.getElementById('results-section').hidden = false;
+  bindRowActions();
+}
+
+function renderRow(c) {
+  const isSaved = store.saved.has(c.id);
+  const isDnc = store.dnc.has(c.id);
+  const status = store.status[c.id] || '';
+  const hasNote = !!store.notes[c.id];
+  const trClass = [isSaved ? 'saved-row' : '', isDnc ? 'dnc-row' : ''].filter(Boolean).join(' ');
+  return `
+    <tr class="${trClass}" data-id="${c.id}">
       <td><span class="score ${scoreClass(c.score)}">${c.score}</span></td>
+      <td>
+        <div class="row-actions">
+          <button class="act-save ${isSaved ? 'active' : ''}" title="保存">★</button>
+          <button class="act-dnc ${isDnc ? 'dnc-on' : ''}" title="DNC">🚫</button>
+          <button class="act-call" title="架電">📞</button>
+          <button class="act-note ${hasNote ? 'active' : ''}" title="メモ">📝</button>
+          <button class="act-script" title="スクリプト">📜</button>
+        </div>
+      </td>
       <td>${c.name}</td>
       <td>${c.industry}</td>
       <td>${c.prefecture}</td>
       <td>${c.employees}名</td>
-      <td class="phone">${c.phone}</td>
+      <td class="phone"><a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a></td>
+      <td>
+        <select class="status-select" data-id="${c.id}">
+          <option value="">未架電</option>
+          <option value="connected" ${status==='connected'?'selected':''}>繋がった</option>
+          <option value="absent" ${status==='absent'?'selected':''}>不在</option>
+          <option value="rejected" ${status==='rejected'?'selected':''}>拒否</option>
+          <option value="meeting" ${status==='meeting'?'selected':''}>商談化</option>
+        </select>
+      </td>
       <td class="reasoning">${c.reasoning}</td>
     </tr>
-  `).join('');
-  document.getElementById('result-count').textContent = `（${filtered.length}件）`;
-  document.getElementById('results-section').hidden = false;
+  `;
 }
 
+function bindRowActions() {
+  document.querySelectorAll('#results-table tbody tr').forEach(tr => {
+    const id = parseInt(tr.dataset.id, 10);
+    const company = state.scored.find(c => c.id === id);
+    tr.querySelector('.act-save').addEventListener('click', () => toggleSave(id));
+    tr.querySelector('.act-dnc').addEventListener('click', () => toggleDnc(id));
+    tr.querySelector('.act-call').addEventListener('click', () => recordCall(id));
+    tr.querySelector('.act-note').addEventListener('click', () => openNote(id));
+    tr.querySelector('.act-script').addEventListener('click', () => openScript(company));
+    tr.querySelector('.status-select').addEventListener('change', e => setStatus(id, e.target.value));
+  });
+}
+
+/* ============ Storage ============ */
+const STORAGE_KEY = 'tell.v1';
+
+const store = {
+  saved: new Set(),
+  dnc: new Set(),
+  status: {},
+  notes: {},
+  history: [],
+  opts: { excludeDnc: true, savedOnly: false },
+};
+
+function loadStore() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    store.saved = new Set(d.saved || []);
+    store.dnc = new Set(d.dnc || []);
+    store.status = d.status || {};
+    store.notes = d.notes || {};
+    store.history = d.history || [];
+    store.opts = { ...store.opts, ...(d.opts || {}) };
+  } catch (e) { console.warn('loadStore failed', e); }
+}
+
+function saveStore() {
+  const d = {
+    saved: [...store.saved],
+    dnc: [...store.dnc],
+    status: store.status,
+    notes: store.notes,
+    history: store.history,
+    opts: store.opts,
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+}
+
+/* ============ Actions ============ */
+function toggleSave(id) {
+  if (store.saved.has(id)) store.saved.delete(id); else store.saved.add(id);
+  saveStore();
+  renderResults();
+  renderSidebar();
+}
+
+function toggleDnc(id) {
+  if (store.dnc.has(id)) store.dnc.delete(id); else store.dnc.add(id);
+  saveStore();
+  renderResults();
+  renderSidebar();
+}
+
+function setStatus(id, status) {
+  if (status) store.status[id] = status;
+  else delete store.status[id];
+  store.history.unshift({ id, status: status || 'unset', t: Date.now() });
+  store.history = store.history.slice(0, 50);
+  saveStore();
+  renderSidebar();
+  if (status === 'meeting' || status === 'rejected' || status === 'connected') renderResults();
+}
+
+function recordCall(id) {
+  const company = state.companies.find(c => c.id === id);
+  if (!company) return;
+  store.history.unshift({ id, status: 'called', t: Date.now() });
+  store.history = store.history.slice(0, 50);
+  saveStore();
+  renderSidebar();
+  const tel = company.phone.replace(/[^0-9+]/g, '');
+  window.location.href = `tel:${tel}`;
+}
+
+function openNote(id) {
+  const company = state.companies.find(c => c.id === id);
+  const modal = document.getElementById('note-modal');
+  document.getElementById('note-title').textContent = `メモ: ${company.name}`;
+  document.getElementById('note-text').value = store.notes[id] || '';
+  modal.dataset.id = id;
+  modal.hidden = false;
+}
+
+function openScript(company) {
+  const modal = document.getElementById('script-modal');
+  document.getElementById('script-meta').textContent =
+    `${company.name} / ${company.industry} / ${company.prefecture} / 適合度 ${company.score}`;
+  document.getElementById('script-text').textContent = generateScript(company);
+  modal.hidden = false;
+}
+
+function generateScript(company) {
+  const product = state.classification?.category?.name || '弊社サービス';
+  const productText = document.getElementById('product-input').value.trim() || product;
+  const pains = state.icp?.pains?.slice(0, 2).join('・') || '業務効率化';
+  return [
+    `【架電スクリプト・参考例】`,
+    ``,
+    `■ オープニング`,
+    `お忙しいところ恐れ入ります、${company.name}のご担当者様でいらっしゃいますでしょうか。`,
+    `わたくし、◯◯（事業者名）の△△と申します。`,
+    `本日は${product}のご案内でお電話させていただきました。1〜2分だけお時間よろしいでしょうか。`,
+    ``,
+    `■ 仮説提示（事前リサーチに基づく）`,
+    `${company.industry}・${company.prefecture}の${company.employees}名規模の御社では、`,
+    `${pains}といった点でお悩みのケースが多いと伺っており、`,
+    `${productText}でお役に立てる可能性があると考えております。`,
+    ``,
+    `■ 現状ヒアリング`,
+    `差し支えなければ、現在${pains}についてどのように対応されていらっしゃいますか？`,
+    ``,
+    `■ クロージング`,
+    `詳しい資料をメールでお送りしてもよろしいでしょうか。`,
+    `15分ほどのオンライン説明のお時間もいただけると幸いです。`,
+    ``,
+    `※ 特商法の遵守事項`,
+    `・冒頭で事業者名・勧誘目的を明示しています。`,
+    `・断られた場合は再勧誘禁止。DNCリストへ即時追加してください。`,
+  ].join('\n');
+}
+
+/* ============ Sidebar render ============ */
+function renderSidebar() {
+  const savedCompanies = [...store.saved].map(id => state.companies.find(c => c.id === id)).filter(Boolean);
+  const dncCompanies = [...store.dnc].map(id => state.companies.find(c => c.id === id)).filter(Boolean);
+
+  document.getElementById('badge-saved').textContent = savedCompanies.length;
+  document.getElementById('badge-dnc').textContent = dncCompanies.length;
+  document.getElementById('badge-history').textContent = store.history.length;
+
+  document.getElementById('saved-list').innerHTML = savedCompanies.length === 0
+    ? '<div class="empty">まだ保存なし</div>'
+    : savedCompanies.map(c => `
+      <div class="side-item">
+        <div class="name" title="${c.name}">${c.name}<div class="phone">${c.phone}</div></div>
+        <button class="x" data-action="unsave" data-id="${c.id}" aria-label="削除">×</button>
+      </div>
+    `).join('');
+
+  document.getElementById('dnc-list').innerHTML = dncCompanies.length === 0
+    ? '<div class="empty">DNC登録なし</div>'
+    : dncCompanies.map(c => `
+      <div class="side-item">
+        <div class="name" title="${c.name}">${c.name}<div class="phone">${c.phone}</div></div>
+        <button class="x" data-action="undnc" data-id="${c.id}" aria-label="削除">×</button>
+      </div>
+    `).join('');
+
+  const statusLabel = { connected:'繋', absent:'不在', rejected:'拒否', meeting:'商談', called:'発信', unset:'-' };
+  document.getElementById('history-list').innerHTML = store.history.length === 0
+    ? '<div class="empty">履歴なし</div>'
+    : store.history.slice(0, 10).map(h => {
+        const c = state.companies.find(co => co.id === h.id);
+        if (!c) return '';
+        return `<div class="side-item">
+          <div class="name">${c.name}<div class="phone">${statusLabel[h.status]||h.status} / ${new Date(h.t).toLocaleString('ja-JP',{hour:'2-digit',minute:'2-digit',month:'2-digit',day:'2-digit'})}</div></div>
+        </div>`;
+      }).join('');
+
+  document.querySelectorAll('#saved-list .x, #dnc-list .x').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = parseInt(btn.dataset.id, 10);
+      if (btn.dataset.action === 'unsave') toggleSave(id);
+      else toggleDnc(id);
+    });
+  });
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayCalls = store.history.filter(h => h.t >= today.getTime()).length;
+  const meetings = Object.values(store.status).filter(s => s === 'meeting').length;
+  const connected = Object.values(store.status).filter(s => s === 'connected' || s === 'meeting').length;
+  const total = Object.keys(store.status).length;
+  document.getElementById('stat-today').textContent = todayCalls;
+  document.getElementById('stat-saved').textContent = savedCompanies.length;
+  document.getElementById('stat-dnc').textContent = dncCompanies.length;
+  document.getElementById('stat-meeting').textContent = meetings;
+  document.getElementById('ana-total').textContent = total;
+  document.getElementById('ana-connected').textContent = connected;
+  document.getElementById('ana-rate').textContent = total > 0 ? `${Math.round(meetings/total*100)}%` : '0%';
+
+  const calledIds = Object.keys(store.status).map(Number);
+  const calledScored = calledIds.map(id => state.scored.find(c => c.id === id)).filter(Boolean);
+  const avg = calledScored.length > 0
+    ? Math.round(calledScored.reduce((s,c) => s+c.score, 0) / calledScored.length)
+    : null;
+  document.getElementById('ana-avg-score').textContent = avg !== null ? avg : '-';
+}
+
+/* ============ Filter integration ============ */
+function applyFilters() {
+  const industry = document.getElementById('filter-industry').value;
+  const prefecture = document.getElementById('filter-prefecture').value;
+  const size = document.getElementById('filter-size').value;
+  const minScore = parseInt(document.getElementById('filter-score').value, 10);
+  const search = document.getElementById('search-box').value.trim().toLowerCase();
+
+  return state.scored
+    .filter(c => !industry || c.industry === industry)
+    .filter(c => !prefecture || c.prefecture === prefecture)
+    .filter(c => !size || c.size === size)
+    .filter(c => c.score >= minScore)
+    .filter(c => !store.opts.excludeDnc || !store.dnc.has(c.id))
+    .filter(c => !store.opts.savedOnly || store.saved.has(c.id))
+    .filter(c => !search || c.name.toLowerCase().includes(search) || c.phone.includes(search));
+}
+
+/* ============ CSV/JSON Export ============ */
+function downloadFile(filename, content, type = 'text/csv;charset=utf-8') {
+  const blob = new Blob(['﻿' + content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function toCsv(rows) {
+  const headers = ['会社名','電話番号','業種','都道府県','従業員数','適合度','ステータス','メモ','根拠'];
+  const lines = [headers.join(',')];
+  rows.forEach(c => {
+    const status = store.status[c.id] || '';
+    const note = (store.notes[c.id] || '').replace(/"/g, '""').replace(/\n/g, ' ');
+    const reasoning = (c.reasoning || '').replace(/"/g, '""');
+    lines.push([
+      `"${c.name}"`,
+      `"${c.phone}"`,
+      `"${c.industry}"`,
+      `"${c.prefecture}"`,
+      c.employees,
+      c.score ?? '',
+      `"${status}"`,
+      `"${note}"`,
+      `"${reasoning}"`,
+    ].join(','));
+  });
+  return lines.join('\n');
+}
+
+function exportResults() {
+  const rows = applyFilters();
+  if (rows.length === 0) return alert('結果がありません');
+  downloadFile(`tell-results-${Date.now()}.csv`, toCsv(rows));
+}
+
+function exportSaved() {
+  const rows = [...store.saved].map(id => state.scored.find(c => c.id === id) || state.companies.find(c => c.id === id)).filter(Boolean);
+  if (rows.length === 0) return alert('保存リストが空です');
+  downloadFile(`tell-saved-${Date.now()}.csv`, toCsv(rows));
+}
+
+function exportAll() {
+  const data = {
+    saved: [...store.saved], dnc: [...store.dnc],
+    status: store.status, notes: store.notes,
+    history: store.history, opts: store.opts,
+    exportedAt: new Date().toISOString(),
+  };
+  downloadFile(`tell-backup-${Date.now()}.json`, JSON.stringify(data, null, 2), 'application/json');
+}
+
+function importJson(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const d = JSON.parse(e.target.result);
+      if (Array.isArray(d.saved)) store.saved = new Set(d.saved);
+      if (Array.isArray(d.dnc)) store.dnc = new Set(d.dnc);
+      if (d.status) store.status = d.status;
+      if (d.notes) store.notes = d.notes;
+      if (Array.isArray(d.history)) store.history = d.history;
+      if (d.opts) store.opts = { ...store.opts, ...d.opts };
+      saveStore();
+      renderResults();
+      renderSidebar();
+      alert('取込完了');
+    } catch (err) { alert('JSON取込に失敗: ' + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+/* ============ Pipeline ============ */
 function runPipeline(input) {
   state.classification = classifyProduct(input);
   state.icp = state.classification.category.icp;
@@ -660,34 +983,37 @@ function runPipeline(input) {
   renderICP(state.icp);
   renderFilters();
   renderResults();
+  renderSidebar();
 }
 
+/* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512c');
+    const res = await fetch('data/companies.json?v=20260512d');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
     return;
   }
 
+  loadStore();
+
   const countEl = document.getElementById('category-count');
   if (countEl) countEl.textContent = PRODUCT_CATEGORIES.length;
 
+  document.getElementById('opt-exclude-dnc').checked = store.opts.excludeDnc;
+  document.getElementById('opt-saved-only').checked = store.opts.savedOnly;
+
   document.getElementById('analyze-btn').addEventListener('click', () => {
     const input = document.getElementById('product-input').value.trim();
-    if (!input) {
-      alert('商材を入力してください');
-      return;
-    }
+    if (!input) { alert('商材を入力してください'); return; }
     runPipeline(input);
   });
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const text = btn.dataset.sample;
-      document.getElementById('product-input').value = text;
-      runPipeline(text);
+      document.getElementById('product-input').value = btn.dataset.sample;
+      runPipeline(btn.dataset.sample);
     });
   });
 
@@ -699,6 +1025,75 @@ async function init() {
     document.getElementById('filter-score-value').textContent = e.target.value;
     renderResults();
   });
+
+  document.getElementById('search-box').addEventListener('input', () => {
+    if (state.scored.length > 0) renderResults();
+  });
+
+  document.getElementById('opt-exclude-dnc').addEventListener('change', e => {
+    store.opts.excludeDnc = e.target.checked;
+    saveStore(); renderResults();
+  });
+  document.getElementById('opt-saved-only').addEventListener('change', e => {
+    store.opts.savedOnly = e.target.checked;
+    saveStore(); renderResults();
+  });
+
+  document.getElementById('export-results').addEventListener('click', exportResults);
+  document.getElementById('export-saved').addEventListener('click', exportSaved);
+  document.getElementById('export-all').addEventListener('click', exportAll);
+  document.getElementById('import-file').addEventListener('change', e => {
+    if (e.target.files[0]) importJson(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  document.getElementById('clear-history').addEventListener('click', () => {
+    if (!confirm('架電履歴をクリアしますか？')) return;
+    store.history = []; saveStore(); renderSidebar();
+  });
+  document.getElementById('reset-all').addEventListener('click', () => {
+    if (!confirm('保存・DNC・履歴・メモを全削除します。よろしいですか？')) return;
+    store.saved.clear(); store.dnc.clear();
+    store.status = {}; store.notes = {}; store.history = [];
+    saveStore(); renderResults(); renderSidebar();
+  });
+
+  document.querySelectorAll('.collapsible .side-head').forEach(head => {
+    head.addEventListener('click', () => {
+      const sec = head.parentElement;
+      sec.dataset.open = sec.dataset.open === 'true' ? 'false' : 'true';
+    });
+  });
+
+  document.getElementById('sidebar-toggle').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.add('open');
+  });
+  document.getElementById('sidebar-close').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.remove('open');
+  });
+
+  const noteModal = document.getElementById('note-modal');
+  document.getElementById('note-save').addEventListener('click', () => {
+    const id = parseInt(noteModal.dataset.id, 10);
+    const text = document.getElementById('note-text').value.trim();
+    if (text) store.notes[id] = text; else delete store.notes[id];
+    saveStore(); noteModal.hidden = true; renderResults();
+  });
+  document.getElementById('note-cancel').addEventListener('click', () => { noteModal.hidden = true; });
+
+  const scriptModal = document.getElementById('script-modal');
+  document.getElementById('script-close').addEventListener('click', () => { scriptModal.hidden = true; });
+  document.getElementById('script-copy').addEventListener('click', () => {
+    const text = document.getElementById('script-text').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('script-copy');
+      const orig = btn.textContent;
+      btn.textContent = 'コピーしました';
+      setTimeout(() => btn.textContent = orig, 1500);
+    });
+  });
+
+  renderSidebar();
 }
 
 init();

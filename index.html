@@ -4,15 +4,95 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tell - B2B営業リスト適合度スコアリング（デモ） | playmark0227-svg</title>
-<link rel="stylesheet" href="style.css?v=20260512c">
+<link rel="stylesheet" href="style.css?v=20260512d">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 </head>
 <body>
+
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h1>Tell <span class="tag">v0.4</span></h1>
+    <button class="sidebar-close" id="sidebar-close" aria-label="閉じる">×</button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="dash-grid">
+      <div class="dash-card"><div class="dash-label">本日架電</div><div class="dash-value" id="stat-today">0</div></div>
+      <div class="dash-card"><div class="dash-label">保存</div><div class="dash-value" id="stat-saved">0</div></div>
+      <div class="dash-card"><div class="dash-label">DNC</div><div class="dash-value" id="stat-dnc">0</div></div>
+      <div class="dash-card"><div class="dash-label">商談化</div><div class="dash-value" id="stat-meeting">0</div></div>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <label class="side-label">🔍 検索</label>
+    <input type="text" id="search-box" placeholder="会社名・電話番号で絞り込み">
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="true">
+    <div class="side-head"><span>⭐ 保存リスト</span><span class="badge" id="badge-saved">0</span></div>
+    <div class="side-body" id="saved-list"><div class="empty">まだ保存なし</div></div>
+    <button class="side-btn" id="export-saved">CSV出力（保存）</button>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>🚫 DNC（架電拒否）</span><span class="badge" id="badge-dnc">0</span></div>
+    <div class="side-body" id="dnc-list"><div class="empty">DNC登録なし</div></div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>📞 架電履歴</span><span class="badge" id="badge-history">0</span></div>
+    <div class="side-body" id="history-list"><div class="empty">履歴なし</div></div>
+    <button class="side-btn danger" id="clear-history">履歴をクリア</button>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>📊 アナリティクス</span></div>
+    <div class="side-body">
+      <div class="kv"><span>架電数</span><strong id="ana-total">0</strong></div>
+      <div class="kv"><span>繋がった</span><strong id="ana-connected">0</strong></div>
+      <div class="kv"><span>商談化率</span><strong id="ana-rate">0%</strong></div>
+      <div class="kv"><span>平均スコア(架電先)</span><strong id="ana-avg-score">-</strong></div>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>📤 エクスポート/取込</span></div>
+    <div class="side-body">
+      <button class="side-btn" id="export-results">現在の結果をCSV出力</button>
+      <button class="side-btn" id="export-all">全データをJSON出力</button>
+      <label class="side-btn file-label">JSON取込
+        <input type="file" id="import-file" accept=".json" hidden>
+      </label>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>⚙ 設定</span></div>
+    <div class="side-body">
+      <label class="kv"><span>DNCを結果から除外</span>
+        <input type="checkbox" id="opt-exclude-dnc" checked>
+      </label>
+      <label class="kv"><span>保存のみ表示</span>
+        <input type="checkbox" id="opt-saved-only">
+      </label>
+      <button class="side-btn danger" id="reset-all">全データをリセット</button>
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    <a href="https://github.com/playmark0227-svg/Tell" target="_blank">GitHub</a>
+  </div>
+</aside>
+
+<button class="sidebar-toggle" id="sidebar-toggle" aria-label="メニュー">☰</button>
+
+<main class="main-content">
+
 <header>
   <div class="container">
-    <h1>Tell <span class="tag">デモ</span></h1>
     <p class="lead">商材テキストからAIが<strong id="category-count">42</strong>カテゴリを判別し、理想顧客プロファイル（ICP）を生成、公開法人データを適合度順に並べ替えます。</p>
   </div>
 </header>
@@ -24,12 +104,12 @@
     <li>収集対象は<strong>法人の公開連絡先のみ</strong>（個人宅・個人携帯は対象外）</li>
     <li>特定商取引法：事業者名・勧誘目的の明示、再勧誘禁止</li>
     <li>個人情報保護法：担当者個人名と紐づく情報は個人情報として扱う</li>
-    <li>robots.txt遵守、レート制限（1ドメイン1req/sec以下）</li>
     <li>架電拒否（DNC）リストを必ず除外してから架電</li>
   </ul>
 </div>
 
-<main class="container">
+<div class="container">
+
   <section class="panel">
     <h2>1. 商材を入力</h2>
     <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
@@ -71,14 +151,10 @@
     <h2>4. 絞り込み</h2>
     <div class="filters">
       <label>業種
-        <select id="filter-industry">
-          <option value="">すべて</option>
-        </select>
+        <select id="filter-industry"><option value="">すべて</option></select>
       </label>
       <label>都道府県
-        <select id="filter-prefecture">
-          <option value="">すべて</option>
-        </select>
+        <select id="filter-prefecture"><option value="">すべて</option></select>
       </label>
       <label>従業員規模
         <select id="filter-size">
@@ -102,11 +178,13 @@
         <thead>
           <tr>
             <th>適合度</th>
+            <th>操作</th>
             <th>会社名</th>
             <th>業種</th>
             <th>所在地</th>
             <th>規模</th>
             <th>代表電話</th>
+            <th>ステータス</th>
             <th>根拠</th>
           </tr>
         </thead>
@@ -114,15 +192,41 @@
       </table>
     </div>
   </section>
-</main>
+
+</div>
 
 <footer>
   <div class="container">
-    <p>このデモはクライアント側だけで動作する簡易版です。商材判別はルールベース分類器、本番ではClaude APIに差し替えて埋め込み類似度ベースのスコアリングを使います。</p>
-    <p><a href="https://github.com/playmark0227-svg/tell">GitHubリポジトリ</a></p>
+    <p>サイドバーで保存・DNC・架電履歴・CSV出力まで管理できます。データはブラウザ内（localStorage）に保存されます。</p>
+    <p><a href="https://github.com/playmark0227-svg/Tell">GitHubリポジトリ</a></p>
   </div>
 </footer>
 
-<script src="app.js?v=20260512c"></script>
+</main>
+
+<div id="note-modal" class="modal" hidden>
+  <div class="modal-content">
+    <h3 id="note-title">メモ</h3>
+    <textarea id="note-text" rows="6"></textarea>
+    <div class="modal-actions">
+      <button id="note-save">保存</button>
+      <button id="note-cancel" class="ghost">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<div id="script-modal" class="modal" hidden>
+  <div class="modal-content wide">
+    <h3>架電スクリプト</h3>
+    <div id="script-meta" class="muted"></div>
+    <pre id="script-text"></pre>
+    <div class="modal-actions">
+      <button id="script-copy">コピー</button>
+      <button id="script-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=20260512d"></script>
 </body>
 </html>
