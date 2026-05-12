@@ -664,7 +664,7 @@ function runPipeline(input) {
 
 async function init() {
   try {
-    const res = await fetch('data/companies.json');
+    const res = await fetch('data/companies.json?v=20260512c');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
