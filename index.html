@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング（デモ）</title>
-<link rel="stylesheet" href="style.css?v=20260512h">
+<link rel="stylesheet" href="style.css?v=20260512i">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -217,6 +217,12 @@
 
   <section class="panel" id="results-section" hidden>
     <h2>6. 結果 <span id="result-count" class="muted"></span></h2>
+    <div class="view-tabs" id="view-tabs">
+      <button class="view-tab active" data-view="all">📋 全て</button>
+      <button class="view-tab" data-view="with_phone">📞 電話あり</button>
+      <button class="view-tab" data-view="without_phone">🌐 電話なし（HPのみ）</button>
+      <button class="view-tab" data-view="saved">⭐ 保存</button>
+    </div>
     <div class="table-wrap">
       <table id="results-table">
         <thead>
@@ -271,6 +277,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260512h"></script>
+<script src="app.js?v=20260512i"></script>
 </body>
 </html>

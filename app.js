@@ -5,7 +5,20 @@ const state = {
   classification: null,
   icp: null,
   scored: [],
+  view: 'all', // all | with_phone | without_phone | saved
 };
+
+function getCompanyUrls(c) {
+  const website = c.website || `https://example.com/c/${c.id}`;
+  return {
+    website,
+    contact: c.contact_url || `${website.replace(/\/$/, '')}/contact`,
+  };
+}
+
+function hasPhone(c) {
+  return c.phone && !/^\(?未登録/.test(c.phone) && c.phone.trim() !== '';
+}
 
 const PRODUCT_CATEGORIES = [
   {
@@ -873,6 +886,10 @@ function renderRow(c) {
   const status = store.status[c.id] || '';
   const hasNote = !!store.notes[c.id];
   const trClass = [isSaved ? 'saved-row' : '', isDnc ? 'dnc-row' : ''].filter(Boolean).join(' ');
+  const urls = getCompanyUrls(c);
+  const phoneCell = hasPhone(c)
+    ? `<a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a>`
+    : `<span class="phone-empty">未取得（HPから問い合わせ）</span>`;
   return `
     <tr class="${trClass}" data-id="${c.id}">
       <td data-label="適合度"><span class="score ${scoreClass(c.score)}">${c.score}</span></td>
@@ -880,7 +897,9 @@ function renderRow(c) {
         <div class="row-actions">
           <button class="act-save ${isSaved ? 'active' : ''}" title="保存">★</button>
           <button class="act-dnc ${isDnc ? 'dnc-on' : ''}" title="DNC">🚫</button>
-          <button class="act-call" title="架電">📞</button>
+          <button class="act-call" title="架電" ${hasPhone(c)?'':'disabled style="opacity:.4"'}>📞</button>
+          <button class="act-hp" data-url="${urls.website}" title="HPを開く">🌐</button>
+          <button class="act-contact" data-url="${urls.contact}" title="お問い合わせ">✉️</button>
           <button class="act-note ${hasNote ? 'active' : ''}" title="メモ">📝</button>
           <button class="act-script" title="スクリプト">📜</button>
         </div>
@@ -889,7 +908,7 @@ function renderRow(c) {
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">${c.prefecture}${c.city ? ' ' + c.city : ''}</td>
       <td data-label="規模">${c.employees}名</td>
-      <td data-label="電話" class="phone"><a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a></td>
+      <td data-label="電話" class="phone">${phoneCell}</td>
       <td data-label="状況">
         <select class="status-select" data-id="${c.id}">
           <option value="">未架電</option>
@@ -914,6 +933,12 @@ function bindRowActions() {
     tr.querySelector('.act-save').addEventListener('click', () => toggleSave(id));
     tr.querySelector('.act-dnc').addEventListener('click', () => toggleDnc(id));
     tr.querySelector('.act-call').addEventListener('click', () => recordCall(id));
+    tr.querySelector('.act-hp').addEventListener('click', e => {
+      window.open(e.currentTarget.dataset.url, '_blank', 'noopener');
+    });
+    tr.querySelector('.act-contact').addEventListener('click', e => {
+      window.open(e.currentTarget.dataset.url, '_blank', 'noopener');
+    });
     tr.querySelector('.act-note').addEventListener('click', () => openNote(id));
     tr.querySelector('.act-script').addEventListener('click', () => openScript(company));
     tr.querySelector('.status-select').addEventListener('change', e => setStatus(id, e.target.value));
@@ -1130,7 +1155,13 @@ function applyFilters() {
     .filter(c => c.score >= minScore)
     .filter(c => !store.opts.excludeDnc || !store.dnc.has(c.id))
     .filter(c => !store.opts.savedOnly || store.saved.has(c.id))
-    .filter(c => !search || c.name.toLowerCase().includes(search) || c.phone.includes(search));
+    .filter(c => !search || c.name.toLowerCase().includes(search) || (c.phone || '').includes(search))
+    .filter(c => {
+      if (state.view === 'with_phone') return hasPhone(c);
+      if (state.view === 'without_phone') return !hasPhone(c);
+      if (state.view === 'saved') return store.saved.has(c.id);
+      return true;
+    });
 }
 
 /* ============ CSV/JSON Export ============ */
@@ -1145,17 +1176,21 @@ function downloadFile(filename, content, type = 'text/csv;charset=utf-8') {
 }
 
 function toCsv(rows) {
-  const headers = ['会社名','電話番号','業種','都道府県','従業員数','適合度','ステータス','メモ','根拠'];
+  const headers = ['会社名','電話番号','HP','お問い合わせURL','業種','都道府県','市区町村','従業員数','適合度','ステータス','メモ','根拠'];
   const lines = [headers.join(',')];
   rows.forEach(c => {
     const status = store.status[c.id] || '';
     const note = (store.notes[c.id] || '').replace(/"/g, '""').replace(/\n/g, ' ');
     const reasoning = (c.reasoning || '').replace(/"/g, '""');
+    const urls = getCompanyUrls(c);
     lines.push([
       `"${c.name}"`,
-      `"${c.phone}"`,
+      `"${c.phone || ''}"`,
+      `"${urls.website}"`,
+      `"${urls.contact}"`,
       `"${c.industry}"`,
       `"${c.prefecture}"`,
+      `"${c.city || ''}"`,
       c.employees,
       c.score ?? '',
       `"${status}"`,
@@ -1265,7 +1300,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512h');
+    const res = await fetch('data/companies.json?v=20260512i');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
@@ -1303,6 +1338,15 @@ async function init() {
     });
   });
   document.getElementById('filter-city').addEventListener('input', renderResults);
+
+  document.querySelectorAll('.view-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.view = tab.dataset.view;
+      renderResults();
+    });
+  });
   const scoreSlider = document.getElementById('filter-score');
   scoreSlider.addEventListener('input', e => {
     document.getElementById('filter-score-value').textContent = e.target.value;
