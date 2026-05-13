@@ -52,9 +52,105 @@ APIキーは**あなたのブラウザのlocalStorageにのみ保存**され、`
 - **Sonnet 4.6**：バランス
 - **Opus 4.7**：高精度・高価
 
-## スクレイピング基盤（GitHub Actions）
+## 🔍 Google CSE で商材から会社を自動発見（無料枠で運用可）
 
-実在企業のデータを収集する Python スクリプトと GitHub Actions ワークフローが入っています。
+商材を入れて GitHub Actions を回すと、**Google検索 → 企業HP特定 → 電話・問い合わせURL抽出**まで自動でやります。
+
+### Google CSE の料金（無料枠で十分）
+
+- **無料: 1日100クエリ**まで
+- 有料: $5 / 1000クエリ（超過分のみ）
+- クレジットカード登録なしでも無料枠は使えます
+
+商材5個 × 5クエリ = 25クエリ/回 なら、週1実行で 100クエリ/月。**完全無料**で運用可能。
+
+### セットアップ（10〜15分、ブラウザだけで完結）
+
+#### 1. Google Custom Search Engine を作成
+
+1. https://programmablesearchengine.google.com/ にアクセス（Googleアカウントが必要）
+2. 「新しい検索エンジンを追加」をクリック
+3. 「**ウェブ全体を検索**」を選択
+4. 名前を「tell-partner」など適当に入力 → 作成
+5. 作成後、「**検索エンジンID**」（`cx=...` の値）をメモ
+
+#### 2. Google Cloud で Custom Search API を有効化
+
+1. https://console.cloud.google.com/ にアクセス
+2. プロジェクトを作成（無料、クレカ不要）
+3. 「APIとサービス」 → 「ライブラリ」 → **Custom Search API** を検索 → 有効にする
+4. 「APIとサービス」 → 「認証情報」 → 「**+ 認証情報を作成**」 → **APIキー**
+5. APIキーをコピー
+
+#### 3. GitHub の Secrets に登録
+
+1. リポジトリ → **Settings → Secrets and variables → Actions**
+2. 「**New repository secret**」で2つ追加：
+   - `GOOGLE_CSE_API_KEY` = Cloud Console で発行したAPIキー
+   - `GOOGLE_CSE_ID` = Programmable Search Engine の検索エンジンID（cx）
+3. 任意で `ANTHROPIC_API_KEY` も登録（クエリ生成の精度向上、無くても動く）
+
+#### 4. intents.json を作成
+
+リポジトリ上で `scripts/intents.json` を新規作成。`scripts/intents.example.json` をコピー編集が早い：
+
+```json
+{
+  "products": [
+    {
+      "name": "ウォーターサーバー",
+      "description": "オフィス向け、月額制、福利厚生・来客対応",
+      "target": {
+        "industries": ["情報通信業", "サービス業"],
+        "prefectures": ["東京都"],
+        "sizes": ["small", "mid"]
+      },
+      "max_queries": 5,
+      "max_results_per_query": 10
+    }
+  ]
+}
+```
+
+#### 5. ワークフロー実行
+
+1. **Actions** タブ → 「**Discover Companies (Google CSE)**」を選択
+2. 右上「**Run workflow**」をクリック → ブランチ指定して実行
+3. 5〜10分待つ
+4. 完了すると `data/companies.json` が自動更新され、Pagesも再デプロイ
+5. サイトをリロードすると発見企業が反映されています
+
+### 動作する流れ
+
+```
+intents.json (商材ターゲット)
+    ↓
+Google CSE API でクエリ実行（各商材5クエリ程度）
+    ↓
+ヒットしたHPのURLを取得（ノイズドメイン除外）
+    ↓
+各HPを巡回（robots.txt遵守、1ドメイン1.2秒待機）
+    ↓
+title・meta・電話番号・問い合わせURLを抽出
+    ↓
+data/companies.json に書き込み（既存と重複排除でマージ）
+    ↓
+GitHub Pagesが自動再デプロイ
+```
+
+### 自動実行
+
+`.github/workflows/discover.yml` は **月曜04:00 JST** に自動実行されるよう設定済み。最初に1回手動実行すれば、以降は週次で動き続けます。
+
+### ノイズ除外
+
+新聞社、リクナビ・マイナビ、楽天市場、Amazon、食べログ、Wikipedia、Twitter/X、PR TIMES等は自動的に検索結果から除外します（個別企業のHPだけを集めるため）。
+
+---
+
+## 個別シードからのスクレイピング（手元の企業リストの補完）
+
+既知の会社リストから電話・問い合わせURLだけを補強したい場合は `scripts/enrich.py` が使えます。
 
 ### 仕組み
 

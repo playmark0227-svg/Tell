@@ -1,0 +1,52 @@
+name: Discover Companies (Google CSE)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 19 * * 1"  # 月曜 04:00 JST
+
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run discoverer
+        env:
+          GOOGLE_CSE_API_KEY: ${{ secrets.GOOGLE_CSE_API_KEY }}
+          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MERGE_WITH_EXISTING: "true"
+        run: |
+          if [ -z "$GOOGLE_CSE_API_KEY" ] || [ -z "$GOOGLE_CSE_ID" ]; then
+            echo "::error::Secretsが未設定。Settings → Secrets → Actions で GOOGLE_CSE_API_KEY と GOOGLE_CSE_ID を登録してください"
+            exit 1
+          fi
+          if [ ! -f scripts/intents.json ]; then
+            echo "scripts/intents.json が無いため、scripts/intents.example.json を使用します"
+            cp scripts/intents.example.json scripts/intents.json
+          fi
+          python scripts/discover.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "tell-partner-bot"
+          git config user.email "bot@users.noreply.github.com"
+          if git diff --quiet data/companies.json; then
+            echo "No changes."
+          else
+            git add data/companies.json
+            git commit -m "chore(data): discover companies $(date -u +%Y-%m-%d)"
+            git push
+          fi
