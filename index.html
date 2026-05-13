@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513b">
+<link rel="stylesheet" href="style.css?v=20260513c">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -131,6 +131,19 @@
     </div>
   </div>
 
+  <div class="sidebar-section collapsible" data-open="true">
+    <div class="side-head"><span>🌐 ウェブ検索（Brave）</span><span class="badge" id="badge-brave">OFF</span></div>
+    <div class="side-body">
+      <label class="side-label">Brave Search APIキー</label>
+      <input type="password" id="opt-brave-key" placeholder="BSA...">
+      <button class="side-btn" id="brave-test">接続テスト</button>
+      <div id="brave-status" class="empty">未接続</div>
+      <p class="empty" style="font-size:11px;line-height:1.5;margin-top:6px;">
+        ⚠️ APIキーはブラウザのlocalStorageにのみ保存され、Brave以外には送信されません。
+      </p>
+    </div>
+  </div>
+
   <div class="sidebar-section collapsible" data-open="false">
     <div class="side-head"><span>🤖 AI設定（Claude API）</span><span class="badge" id="badge-ai">OFF</span></div>
     <div class="side-body">
@@ -231,7 +244,11 @@
   <section class="panel">
     <h2>1. 商材を入力</h2>
     <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
-    <button id="analyze-btn">商材を分析して検索</button>
+    <div class="action-row">
+      <button id="analyze-btn">🌐 ウェブから企業を発見して分析</button>
+      <button id="analyze-existing-btn" class="ghost">登録済み企業のみ分析</button>
+    </div>
+    <div id="discovery-progress" class="discovery-progress" hidden></div>
     <details class="samples-toggle">
       <summary>クイックテンプレ（タップで入力欄に挿入）</summary>
       <div class="samples">
@@ -394,6 +411,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513b"></script>
+<script src="app.js?v=20260513c"></script>
 </body>
 </html>

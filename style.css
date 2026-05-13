@@ -537,6 +537,53 @@ button.ghost { background: transparent; color: var(--text); border: 1px solid va
   margin-top: 8px;
 }
 
+.action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.action-row button { margin-top: 0; }
+
+.discovery-progress {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--panel-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.discovery-progress::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+.discovery-progress.done::before {
+  content: "✓";
+  border: 0;
+  color: var(--good);
+  width: auto; height: auto;
+  font-size: 16px;
+  animation: none;
+}
+.discovery-progress.error::before {
+  content: "⚠";
+  border: 0;
+  color: var(--danger);
+  width: auto; height: auto;
+  font-size: 16px;
+  animation: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

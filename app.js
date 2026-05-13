@@ -1076,7 +1076,7 @@ const store = {
   followUps: [],     // [{id, t}] next-callback queue
   profiles: [],      // [{id, name, productText, icp, strategy, classification, savedAt}]
   activeProfile: null,
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001' },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '' },
 };
 
 function loadStore() {
@@ -1581,6 +1581,171 @@ async function callClaude({ system, prompt, max_tokens = 1024 }) {
   return data.content?.[0]?.text || '';
 }
 
+/* ============ Brave Search (browser direct) ============ */
+const BRAVE_EXCLUDED_DOMAINS = new Set([
+  'asahi.com','nikkei.com','mainichi.jp','yomiuri.co.jp','sankei.com',
+  'rikunabi.com','mynavi.jp','indeed.com','doda.jp','type.jp',
+  'rakuten.co.jp','amazon.co.jp','yahoo.co.jp','google.com','google.co.jp',
+  'tabelog.com','hotpepper.jp','gnavi.co.jp','retty.me',
+  'wikipedia.org','wikiwand.com','note.com','qiita.com','zenn.dev',
+  'facebook.com','twitter.com','x.com','instagram.com','linkedin.com',
+  'youtube.com','tiktok.com',
+  'prtimes.jp','atpress.ne.jp','jp.linkedin.com',
+  'houjin-bangou.nta.go.jp','search.brave.com',
+]);
+
+function rootDomain(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); }
+  catch { return ''; }
+}
+function isExcludedDomain(url) {
+  const d = rootDomain(url);
+  for (const ex of BRAVE_EXCLUDED_DOMAINS) {
+    if (d === ex || d.endsWith('.' + ex)) return true;
+  }
+  return false;
+}
+
+const PHONE_RE_JS = /(?<![0-9])(?:0(?:120|800|570)|0\d{1,3})[-(ー－（]?\d{1,4}[-)ー－）]?\d{3,4}(?![0-9])/g;
+
+function extractPhoneFromText(text) {
+  if (!text) return '';
+  const matches = String(text).match(PHONE_RE_JS);
+  if (!matches) return '';
+  return matches[0].replace(/[ーｰ－（）]/g, c => ({'ー':'-','ｰ':'-','－':'-','（':'(','）':')'}[c]||c));
+}
+
+const _braveLastCall = { t: 0 };
+async function braveSearch(query, count = 10) {
+  if (!store.opts.braveKey) throw new Error('Brave APIキー未設定');
+  // 1req/sec を守る
+  const delta = Date.now() - _braveLastCall.t;
+  if (delta < 1100) await new Promise(r => setTimeout(r, 1100 - delta));
+  _braveLastCall.t = Date.now();
+
+  const params = new URLSearchParams({
+    q: query, count: String(Math.min(count, 20)),
+    country: 'JP', search_lang: 'jp', ui_lang: 'ja-JP',
+    result_filter: 'web',
+  });
+  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+    headers: {
+      'X-Subscription-Token': store.opts.braveKey,
+      'Accept': 'application/json',
+    },
+  });
+  if (!res.ok) throw new Error(`Brave API ${res.status}: ${(await res.text()).slice(0,150)}`);
+  const data = await res.json();
+  return (data.web?.results || []);
+}
+
+function generateQueriesFromICP(productText, icp) {
+  const industries = icp?.industries || [];
+  const queries = [];
+  const seen = new Set();
+  for (const ind of industries.slice(0, 4)) {
+    const q1 = `${ind} 中小企業 会社概要`;
+    const q2 = `${ind} 株式会社 採用 募集`;
+    if (!seen.has(q1)) { queries.push(q1); seen.add(q1); }
+    if (!seen.has(q2)) { queries.push(q2); seen.add(q2); }
+  }
+  if (queries.length < 3) {
+    queries.push(`${productText.split(/[、。\s]/)[0]} 導入企業 会社`);
+  }
+  return queries.slice(0, 5);
+}
+
+async function aiGenerateQueries(productText, icp) {
+  if (!store.opts.aiEnabled || !store.opts.aiKey) return generateQueriesFromICP(productText, icp);
+  try {
+    const prompt = `以下の商材を購入しそうな日本企業をWeb検索で見つけるためのクエリを5個、JSON配列のみで返してください。
+
+商材: ${productText}
+ターゲット業種: ${(icp.industries||[]).join('、')}
+
+要件: 各クエリは「業種＋特性＋公式HPがヒットしやすいキーワード」(例「金属加工 中小企業 会社概要」)。説明文不要。
+
+例: ["金属加工 東京 中小企業 会社概要","印刷会社 大阪 採用"]`;
+    const text = await callClaude({ system: 'B2B営業クエリ生成専門家', prompt, max_tokens: 600 });
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) return generateQueriesFromICP(productText, icp);
+    const arr = JSON.parse(m[0]);
+    return arr.filter(q => typeof q === 'string').slice(0, 5);
+  } catch (e) {
+    console.warn('aiGenerateQueries failed', e);
+    return generateQueriesFromICP(productText, icp);
+  }
+}
+
+function parseCompanyFromResult(r, idx) {
+  const url = r.url || '';
+  if (!url || isExcludedDomain(url)) return null;
+  const title = (r.title || '').replace(/&amp;/g, '&').trim();
+  const desc = (r.description || '').replace(/<[^>]+>/g, '').trim();
+  // 会社名抽出: タイトルの "|"・"-"・"｜" 前まで
+  let name = title.split(/[\|｜\-]/)[0].trim();
+  if (!name) name = rootDomain(url);
+  const phone = extractPhoneFromText(desc + ' ' + title);
+  return {
+    id: 500000 + Date.now() % 1000000 + idx,
+    name: name.slice(0, 80),
+    phone: phone || '',
+    website: `https://${rootDomain(url)}`,
+    contact_url: '',
+    industry: '',
+    prefecture: '',
+    city: '',
+    size: 'small',
+    employees: 30,
+    description: desc.slice(0, 240),
+    keywords: desc.split(/[\s、,。]+/).filter(w => w.length >= 2).slice(0, 8),
+    found_via_product: document.getElementById('product-input').value.trim().slice(0, 60),
+    discovered_at: Date.now(),
+  };
+}
+
+async function discoverFromBrave(productText, icp, onProgress) {
+  if (!store.opts.braveKey) throw new Error('Brave APIキーを設定してください');
+  const queries = await aiGenerateQueries(productText, icp);
+  onProgress?.(`検索クエリ ${queries.length}件を生成`);
+  const all = getAllCompanies();
+  const existingKeys = new Set(all.map(dedupKey));
+  const seenDomains = new Set();
+  const found = [];
+  let qIdx = 0;
+  for (const q of queries) {
+    qIdx++;
+    onProgress?.(`検索 ${qIdx}/${queries.length}: "${q}"`);
+    try {
+      const results = await braveSearch(q, 10);
+      let count = 0;
+      results.forEach((r, i) => {
+        if (!r.url || isExcludedDomain(r.url)) return;
+        const dom = rootDomain(r.url);
+        if (seenDomains.has(dom)) return;
+        seenDomains.add(dom);
+        const c = parseCompanyFromResult(r, found.length);
+        if (!c) return;
+        const key = dedupKey(c);
+        if (existingKeys.has(key)) return;
+        existingKeys.add(key);
+        found.push(c);
+        count++;
+      });
+      onProgress?.(`検索 ${qIdx}/${queries.length}: ${count}社発見`);
+    } catch (e) {
+      console.warn('brave query failed:', q, e);
+      onProgress?.(`検索 ${qIdx}/${queries.length}: 失敗 (${e.message.slice(0,40)})`);
+    }
+  }
+  if (found.length > 0) {
+    store.importedCompanies.push(...found);
+    saveStore();
+    updateOnboarding();
+  }
+  return found;
+}
+
 function extractJson(text) {
   const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = m ? m[1] : text;
@@ -1644,9 +1809,10 @@ async function aiScript(company, productText, icp, strategy) {
 }
 
 /* ============ Pipeline ============ */
-async function runPipeline(input) {
-  if (getAllCompanies().length === 0) {
-    alert('企業データが未登録です。サイドバーからCSV/JSON取込、または「サンプル60社を読込」してください。');
+async function runPipeline(input, options = {}) {
+  const { discover = false } = options;
+  if (!discover && getAllCompanies().length === 0) {
+    alert('企業データが0件です。先に「🌐 ウェブから企業を発見して分析」で発見するか、サイドバーから取込してください。');
     return;
   }
   if (store.opts.aiEnabled && store.opts.aiKey) {
@@ -1676,6 +1842,28 @@ async function runPipeline(input) {
     state.strategy = inferStrategy(state.classification.category, state.icp);
     state.intentSignals = analyzeProductIntent(input);
   }
+  // Brave APIキーがあって discoverモードなら、ウェブから企業発見
+  const progEl = document.getElementById('discovery-progress');
+  if (discover && store.opts.braveKey) {
+    progEl.hidden = false;
+    progEl.classList.remove('done', 'error');
+    progEl.textContent = '商材を分析してターゲット企業を検索中…';
+    try {
+      const found = await discoverFromBrave(input, state.icp, msg => {
+        progEl.textContent = msg;
+      });
+      progEl.classList.add('done');
+      progEl.textContent = `✓ ${found.length}社の新規企業を発見しました${found.length === 0 ? '（既存と重複した可能性あり）' : ''}`;
+    } catch (e) {
+      progEl.classList.add('error');
+      progEl.textContent = `発見失敗: ${e.message}`;
+    }
+  } else if (discover && !store.opts.braveKey) {
+    progEl.hidden = false;
+    progEl.classList.add('error');
+    progEl.textContent = '⚠ Brave APIキーが未設定。サイドバー「🌐 ウェブ検索」から登録してください';
+  }
+
   const allCompanies = getAllCompanies();
   state.scored = allCompanies
     .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
@@ -1734,7 +1922,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513b');
+    const res = await fetch('data/companies.json?v=20260513c');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -1771,6 +1959,27 @@ async function init() {
 
   // プロファイル保存
   document.getElementById('prof-save').addEventListener('click', saveProfile);
+  document.getElementById('opt-brave-key').value = store.opts.braveKey || '';
+  document.getElementById('badge-brave').textContent = store.opts.braveKey ? 'ON' : 'OFF';
+  document.getElementById('opt-brave-key').addEventListener('input', e => {
+    store.opts.braveKey = e.target.value.trim();
+    document.getElementById('badge-brave').textContent = store.opts.braveKey ? 'ON' : 'OFF';
+    saveStore();
+  });
+  document.getElementById('brave-test').addEventListener('click', async () => {
+    const statusEl = document.getElementById('brave-status');
+    if (!store.opts.braveKey) { statusEl.textContent = 'キーを入力してください'; statusEl.style.color = 'var(--danger)'; return; }
+    statusEl.textContent = 'テスト中…'; statusEl.style.color = 'var(--mid)';
+    try {
+      const r = await braveSearch('テスト', 1);
+      statusEl.textContent = `接続成功 ✓ (結果${r.length}件)`;
+      statusEl.style.color = 'var(--good)';
+    } catch (e) {
+      statusEl.textContent = `失敗: ${e.message.slice(0,80)}`;
+      statusEl.style.color = 'var(--danger)';
+    }
+  });
+
   document.getElementById('opt-ai-enabled').checked = !!store.opts.aiEnabled;
   document.getElementById('opt-ai-key').value = store.opts.aiKey || '';
   document.getElementById('opt-ai-model').value = store.opts.aiModel || 'claude-haiku-4-5-20251001';
@@ -1805,13 +2014,17 @@ async function init() {
   document.getElementById('analyze-btn').addEventListener('click', async () => {
     const input = document.getElementById('product-input').value.trim();
     if (!input) { alert('商材を入力してください'); return; }
-    await runPipeline(input);
+    await runPipeline(input, { discover: true });
+  });
+  document.getElementById('analyze-existing-btn').addEventListener('click', async () => {
+    const input = document.getElementById('product-input').value.trim();
+    if (!input) { alert('商材を入力してください'); return; }
+    await runPipeline(input, { discover: false });
   });
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       document.getElementById('product-input').value = btn.dataset.sample;
-      await runPipeline(btn.dataset.sample);
     });
   });
 
@@ -1939,7 +2152,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513b');
+      const res = await fetch('data/sample.json?v=20260513c');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
