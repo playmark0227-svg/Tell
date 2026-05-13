@@ -20,6 +20,100 @@ function hasPhone(c) {
   return c.phone && !/^\(?未登録/.test(c.phone) && c.phone.trim() !== '';
 }
 
+/* ============ CSV ============ */
+function parseCSVLine(line) {
+  const out = [];
+  let cur = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') { inQuote = false; }
+      else { cur += ch; }
+    } else {
+      if (ch === '"') inQuote = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+const HEADER_ALIASES = {
+  name: ['name', '会社名', '法人名', '企業名', '商号', 'company'],
+  phone: ['phone', '電話', '電話番号', 'tel', '代表電話'],
+  industry: ['industry', '業種', '業界'],
+  prefecture: ['prefecture', '都道府県', '県'],
+  city: ['city', '市区町村', '市'],
+  size: ['size', '規模'],
+  employees: ['employees', '従業員数', '従業員', '社員数', '人数'],
+  website: ['website', 'hp', 'url', 'ホームページ', 'ウェブサイト'],
+  contact_url: ['contact_url', 'お問い合わせURL', '問い合わせ'],
+  description: ['description', '事業内容', '説明', 'メモ'],
+};
+
+function detectColumns(headers) {
+  const map = {};
+  const lower = headers.map(h => (h || '').toLowerCase());
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
+    const idx = lower.findIndex(h => aliases.some(a => h === a.toLowerCase()));
+    if (idx >= 0) map[field] = idx;
+  }
+  return map;
+}
+
+function parseCSV(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length === 0) return [];
+  const headers = parseCSVLine(lines[0]);
+  const colMap = detectColumns(headers);
+  if (!('name' in colMap)) {
+    throw new Error('CSVに「会社名」「name」等の列が見つかりません');
+  }
+  const sizeFromEmp = e => e >= 301 ? 'large' : e >= 51 ? 'mid' : 'small';
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const fields = parseCSVLine(lines[i]);
+    const get = key => key in colMap ? (fields[colMap[key]] || '').trim() : '';
+    const name = get('name');
+    if (!name) continue;
+    const employees = parseInt(get('employees'), 10) || 30;
+    rows.push({
+      id: 200000 + i,
+      name,
+      phone: get('phone'),
+      industry: get('industry') || 'サービス業',
+      prefecture: get('prefecture'),
+      city: get('city'),
+      size: get('size') || sizeFromEmp(employees),
+      employees,
+      website: get('website'),
+      contact_url: get('contact_url'),
+      description: get('description'),
+      keywords: get('description').split(/[\s、,。]+/).filter(w => w.length >= 2),
+    });
+  }
+  return rows;
+}
+
+const CSV_TEMPLATE = `name,phone,industry,prefecture,city,size,employees,website,description
+株式会社サンプル,03-1234-5678,製造業,東京都,大田区,mid,120,https://example.com/,金属加工部品の製造。タイムカード運用、シフト管理が課題。
+ダミー商事株式会社,06-1111-2222,卸売・小売業,大阪府,大阪市,small,40,https://example.com/,食品卸。配送ドライバー直行直帰。
+`;
+
+function getAllCompanies() {
+  return [...state.companies, ...store.importedCompanies, ...store.customCompanies];
+}
+
+function updateOnboarding() {
+  const total = getAllCompanies().length;
+  document.getElementById('onboarding-panel').hidden = total > 0;
+  const statTotal = document.getElementById('stat-total');
+  if (statTotal) statTotal.textContent = total;
+}
+
 const PRODUCT_CATEGORIES = [
   {
     id: 'attendance', name: '勤怠管理SaaS',
@@ -829,17 +923,15 @@ function renderICP(icp) {
 function renderFilters() {
   const industrySel = document.getElementById('filter-industry');
   const prefSel = document.getElementById('filter-prefecture');
-  const cityList = document.getElementById('city-options');
-  const all = [...state.companies, ...store.customCompanies];
-  if (industrySel.options.length <= 1) {
-    const industries = [...new Set(all.map(c => c.industry))].sort();
-    industrySel.insertAdjacentHTML('beforeend',
-      industries.map(i => `<option value="${i}">${i}</option>`).join(''));
-    const prefectures = [...new Set(all.map(c => c.prefecture).filter(Boolean))].sort();
-    prefSel.insertAdjacentHTML('beforeend',
-      prefectures.map(p => `<option value="${p}">${p}</option>`).join(''));
-  }
-  // 市区町村は都道府県に応じて更新
+  industrySel.innerHTML = '<option value="">すべて</option>';
+  prefSel.innerHTML = '<option value="">すべて</option>';
+  const all = getAllCompanies();
+  const industries = [...new Set(all.map(c => c.industry).filter(Boolean))].sort();
+  industrySel.insertAdjacentHTML('beforeend',
+    industries.map(i => `<option value="${i}">${i}</option>`).join(''));
+  const prefectures = [...new Set(all.map(c => c.prefecture).filter(Boolean))].sort();
+  prefSel.insertAdjacentHTML('beforeend',
+    prefectures.map(p => `<option value="${p}">${p}</option>`).join(''));
   refreshCityDatalist();
   document.getElementById('filter-section').hidden = false;
 }
@@ -848,7 +940,7 @@ function refreshCityDatalist() {
   const cityList = document.getElementById('city-options');
   if (!cityList) return;
   const pref = document.getElementById('filter-prefecture').value;
-  const all = [...state.companies, ...store.customCompanies];
+  const all = getAllCompanies();
   const cities = [...new Set(
     all
       .filter(c => !pref || c.prefecture === pref)
@@ -955,6 +1047,7 @@ const store = {
   notes: {},
   history: [],
   customCompanies: [],
+  importedCompanies: [],
   opts: { excludeDnc: true, savedOnly: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001' },
 };
 
@@ -969,6 +1062,7 @@ function loadStore() {
     store.notes = d.notes || {};
     store.history = d.history || [];
     store.customCompanies = d.customCompanies || [];
+    store.importedCompanies = d.importedCompanies || [];
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -981,6 +1075,7 @@ function saveStore() {
     notes: store.notes,
     history: store.history,
     customCompanies: store.customCompanies,
+    importedCompanies: store.importedCompanies,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -1345,6 +1440,10 @@ async function aiScript(company, productText, icp, strategy) {
 
 /* ============ Pipeline ============ */
 async function runPipeline(input) {
+  if (getAllCompanies().length === 0) {
+    alert('企業データが未登録です。サイドバーからCSV/JSON取込、または「サンプル60社を読込」してください。');
+    return;
+  }
   if (store.opts.aiEnabled && store.opts.aiKey) {
     setAIStatus('分析中…', 'mid');
     try {
@@ -1372,7 +1471,7 @@ async function runPipeline(input) {
     state.strategy = inferStrategy(state.classification.category, state.icp);
     state.intentSignals = analyzeProductIntent(input);
   }
-  const allCompanies = [...state.companies, ...store.customCompanies];
+  const allCompanies = getAllCompanies();
   state.scored = allCompanies
     .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
     .sort((a, b) => b.score - a.score);
@@ -1416,12 +1515,12 @@ function renderStrategy(strategy, scored) {
       </div>
     </div>
     <div class="strategy-summary">
-      <strong>AIの結論：</strong>
+      <strong>分析結論：</strong>
       ${highCount > 0
-        ? `データベース内で<strong>${highCount}社</strong>が高適合（適合度70+）。中程度の見込みも含めると${highCount + midCount}社が対象候補です。`
+        ? `登録企業内で<strong>${highCount}社</strong>が高適合（適合度70+）。中程度の見込みも含めると${highCount + midCount}社が対象候補です。`
         : midCount > 0
-        ? `高適合の企業は見つかりませんでしたが、<strong>${midCount}社</strong>が中程度の見込みです。商材説明をもう少し具体的にすると精度が上がります。`
-        : `現在のデータベースでは適合企業が少なめです。サイドバーから自社で収集した企業を追加するか、商材説明を変えて再分析してください。`}
+        ? `高適合の企業は見つかりませんでしたが、<strong>${midCount}社</strong>が中程度の見込みです。商材説明を具体化するか、データ件数を増やすと精度が上がります。`
+        : `現在のデータでは適合企業が少なめです。サイドバーからCSV取込・企業追加で対象を広げてください。`}
     </div>
   `;
   section.hidden = false;
@@ -1430,14 +1529,15 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512j');
+    const res = await fetch('data/companies.json?v=20260513a');
     state.companies = await res.json();
   } catch (e) {
-    console.error('データ読み込み失敗:', e);
-    return;
+    console.warn('companies.json読み込み失敗:', e);
+    state.companies = [];
   }
 
   loadStore();
+  updateOnboarding();
 
   const countEl = document.getElementById('category-count');
   if (countEl) countEl.textContent = PRODUCT_CATEGORIES.length;
@@ -1537,9 +1637,10 @@ async function init() {
   document.getElementById('cc-add').addEventListener('click', () => {
     const name = document.getElementById('cc-name').value.trim();
     if (!name) { alert('会社名を入力してください'); return; }
-    const phone = document.getElementById('cc-phone').value.trim() || '(未登録)';
-    const prefecture = document.getElementById('cc-prefecture').value.trim() || '-';
-    const city = document.getElementById('cc-city').value.trim() || '';
+    const phone = document.getElementById('cc-phone').value.trim();
+    const prefecture = document.getElementById('cc-prefecture').value.trim();
+    const city = document.getElementById('cc-city').value.trim();
+    const website = document.getElementById('cc-website').value.trim();
     const industry = document.getElementById('cc-industry').value || 'サービス業';
     const size = document.getElementById('cc-size').value || 'small';
     const description = document.getElementById('cc-desc').value.trim() || '';
@@ -1547,12 +1648,14 @@ async function init() {
     const company = {
       id: 100000 + store.customCompanies.length + 1,
       name, phone, industry, prefecture, city, size, employees, description,
+      website,
       keywords: description.split(/[\s、,。]+/).filter(w => w.length >= 2),
       custom: true,
     };
     store.customCompanies.push(company);
     saveStore();
-    ['cc-name','cc-phone','cc-prefecture','cc-city','cc-desc'].forEach(id => document.getElementById(id).value = '');
+    updateOnboarding();
+    ['cc-name','cc-phone','cc-prefecture','cc-city','cc-website','cc-desc'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('cc-industry').value = '';
     document.getElementById('cc-size').value = '';
     renderSidebar();
@@ -1561,12 +1664,75 @@ async function init() {
       if (input) runPipeline(input);
     }
   });
-  document.getElementById('cc-clear').addEventListener('click', () => {
-    if (!confirm('追加した企業を全削除しますか？')) return;
+  // CSV/JSON取込
+  document.getElementById('import-companies').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      let rows;
+      if (file.name.toLowerCase().endsWith('.json')) {
+        rows = JSON.parse(text);
+        if (!Array.isArray(rows)) throw new Error('JSONは配列である必要があります');
+      } else {
+        rows = parseCSV(text);
+      }
+      if (!confirm(`${rows.length}件を取り込みます。既存の取込データを置き換えますか？\n(キャンセルで追加)`)) {
+        rows.forEach((r, i) => { r.id = 200000 + store.importedCompanies.length + i + 1; });
+        store.importedCompanies.push(...rows);
+      } else {
+        rows.forEach((r, i) => { r.id = 200000 + i + 1; });
+        store.importedCompanies = rows;
+      }
+      saveStore();
+      updateOnboarding();
+      renderSidebar();
+      alert(`取込完了: 合計 ${store.importedCompanies.length}件`);
+      const input = document.getElementById('product-input').value.trim();
+      if (input && state.scored.length > 0) runPipeline(input);
+    } catch (err) {
+      alert(`取込失敗: ${err.message}`);
+    }
+    e.target.value = '';
+  });
+
+  document.getElementById('download-template').addEventListener('click', () => {
+    downloadFile('tell-partner-template.csv', CSV_TEMPLATE);
+  });
+
+  document.getElementById('load-sample').addEventListener('click', async () => {
+    if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
+    try {
+      const res = await fetch('data/sample.json?v=20260513a');
+      const data = await res.json();
+      data.forEach((r, i) => { r.id = 300000 + i + 1; });
+      store.importedCompanies.push(...data);
+      saveStore();
+      updateOnboarding();
+      renderSidebar();
+      alert(`サンプル ${data.length}社 を読み込みました`);
+    } catch (e) { alert('読込失敗: ' + e.message); }
+  });
+
+  document.getElementById('clear-companies').addEventListener('click', () => {
+    if (!confirm('取込・追加した企業を全削除します。よろしいですか？')) return;
+    store.importedCompanies = [];
     store.customCompanies = [];
-    saveStore(); renderSidebar();
-    const input = document.getElementById('product-input').value.trim();
-    if (input && state.scored.length > 0) runPipeline(input);
+    saveStore();
+    updateOnboarding();
+    renderSidebar();
+    state.scored = [];
+    document.getElementById('results-section').hidden = true;
+  });
+
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      if (action === 'open-import') document.getElementById('import-companies').click();
+      if (action === 'download-template') downloadFile('tell-partner-template.csv', CSV_TEMPLATE);
+      if (action === 'load-sample') document.getElementById('load-sample').click();
+      if (action === 'open-sidebar') document.getElementById('sidebar-toggle').click();
+    });
   });
 
   document.getElementById('clear-history').addEventListener('click', () => {

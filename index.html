@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>tell partner - B2B営業リスト適合度スコアリング（デモ）</title>
-<link rel="stylesheet" href="style.css?v=20260512j">
+<title>tell partner - B2B営業リスト適合度スコアリング</title>
+<link rel="stylesheet" href="style.css?v=20260513a">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -13,15 +13,15 @@
 
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <h1>tell partner <span class="tag">v0.5</span></h1>
+    <h1>tell partner <span class="tag">v1.0</span></h1>
     <button class="sidebar-close" id="sidebar-close" aria-label="閉じる">×</button>
   </div>
 
   <div class="sidebar-section">
     <div class="dash-grid">
+      <div class="dash-card"><div class="dash-label">登録企業</div><div class="dash-value" id="stat-total">0</div></div>
       <div class="dash-card"><div class="dash-label">本日架電</div><div class="dash-value" id="stat-today">0</div></div>
       <div class="dash-card"><div class="dash-label">保存</div><div class="dash-value" id="stat-saved">0</div></div>
-      <div class="dash-card"><div class="dash-label">DNC</div><div class="dash-value" id="stat-dnc">0</div></div>
       <div class="dash-card"><div class="dash-label">商談化</div><div class="dash-value" id="stat-meeting">0</div></div>
     </div>
   </div>
@@ -29,6 +29,19 @@
   <div class="sidebar-section">
     <label class="side-label">🔍 検索</label>
     <input type="text" id="search-box" placeholder="会社名・電話番号で絞り込み">
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="true">
+    <div class="side-head"><span>📥 データ取込</span></div>
+    <div class="side-body">
+      <label class="side-btn file-label">CSV/JSON取込
+        <input type="file" id="import-companies" accept=".csv,.json" hidden>
+      </label>
+      <button class="side-btn" id="download-template">CSVテンプレ取得</button>
+      <button class="side-btn" id="load-sample">サンプル60社を読込</button>
+      <button class="side-btn danger" id="clear-companies">登録企業を全削除</button>
+      <div class="empty" style="margin-top:6px;">CSV列: name,phone,industry,prefecture,city,size,employees,website,description</div>
+    </div>
   </div>
 
   <div class="sidebar-section collapsible" data-open="true">
@@ -59,12 +72,13 @@
   </div>
 
   <div class="sidebar-section collapsible" data-open="false">
-    <div class="side-head"><span>➕ 企業を追加</span><span class="badge" id="badge-custom">0</span></div>
+    <div class="side-head"><span>➕ 企業を追加（個別）</span><span class="badge" id="badge-custom">0</span></div>
     <div class="side-body">
       <input type="text" id="cc-name" placeholder="会社名（必須）">
       <input type="text" id="cc-phone" placeholder="電話番号">
-      <input type="text" id="cc-prefecture" placeholder="都道府県（例:北海道）">
-      <input type="text" id="cc-city" placeholder="市区町村（例:苫小牧市）">
+      <input type="text" id="cc-prefecture" placeholder="都道府県">
+      <input type="text" id="cc-city" placeholder="市区町村">
+      <input type="text" id="cc-website" placeholder="HP URL（任意）">
       <select id="cc-industry">
         <option value="">業種選択</option>
         <option>製造業</option>
@@ -87,18 +101,17 @@
         <option value="mid">51〜300名</option>
         <option value="large">301名〜</option>
       </select>
-      <textarea id="cc-desc" rows="2" placeholder="事業内容・課題のメモ（任意。AIマッチング精度向上）"></textarea>
+      <textarea id="cc-desc" rows="2" placeholder="事業内容・課題のメモ（AIマッチング精度向上）"></textarea>
       <button class="side-btn" id="cc-add">追加</button>
-      <button class="side-btn danger" id="cc-clear">全削除</button>
     </div>
   </div>
 
   <div class="sidebar-section collapsible" data-open="false">
-    <div class="side-head"><span>📤 エクスポート/取込</span></div>
+    <div class="side-head"><span>📤 結果出力</span></div>
     <div class="side-body">
       <button class="side-btn" id="export-results">現在の結果をCSV出力</button>
-      <button class="side-btn" id="export-all">全データをJSON出力</button>
-      <label class="side-btn file-label">JSON取込
+      <button class="side-btn" id="export-all">全データをJSON出力（バックアップ）</button>
+      <label class="side-btn file-label">JSONバックアップ復元
         <input type="file" id="import-file" accept=".json" hidden>
       </label>
     </div>
@@ -116,12 +129,12 @@
       <select id="opt-ai-model">
         <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価）</option>
         <option value="claude-sonnet-4-6">Sonnet 4.6（バランス）</option>
-        <option value="claude-opus-4-7">Opus 4.7（高精度・高価）</option>
+        <option value="claude-opus-4-7">Opus 4.7（高精度）</option>
       </select>
       <button class="side-btn" id="ai-test">接続テスト</button>
       <div id="ai-status" class="empty">未接続</div>
       <p class="empty" style="font-size:11px;line-height:1.5;margin-top:6px;">
-        ⚠️ APIキーはあなたのブラウザ(localStorage)にのみ保存され、Anthropic以外には送信されません。共有端末では使用しないでください。
+        ⚠️ APIキーはブラウザのlocalStorageにのみ保存され、Anthropic以外には送信されません。共有端末では使用しないでください。
       </p>
     </div>
   </div>
@@ -150,13 +163,12 @@
 
 <header>
   <div class="container">
-    <p class="lead">商材テキストからAIが<strong id="category-count">42</strong>カテゴリを判別し、理想顧客プロファイル（ICP）を生成、公開法人データを適合度順に並べ替えます。</p>
+    <p class="lead">商材を入力するとAIが理想顧客プロファイル（ICP）を生成し、登録された法人リストを適合度順に並べ替えます。</p>
   </div>
 </header>
 
 <div class="notice container">
-  <strong>⚠️ デモ・サンプルデータ</strong>
-  表示中の企業データはすべて架空です。本番運用時は以下を厳守してください：
+  <strong>⚖️ 法令遵守チェックリスト</strong>
   <ul>
     <li>収集対象は<strong>法人の公開連絡先のみ</strong>（個人宅・個人携帯は対象外）</li>
     <li>特定商取引法：事業者名・勧誘目的の明示、再勧誘禁止</li>
@@ -167,40 +179,75 @@
 
 <div class="container">
 
-  <section class="panel">
-    <h2>1. 商材を入力</h2>
-    <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
-    <button id="analyze-btn">AIに商材を判別させて検索</button>
-    <div class="samples">
-      <span class="sample-label">サンプル:</span>
-      <button class="sample-btn" data-sample="中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え">勤怠SaaS</button>
-      <button class="sample-btn" data-sample="法人向け新電力サービス、電気代を10%削減できる切り替え提案">新電力</button>
-      <button class="sample-btn" data-sample="クラウドPBXとIP電話、複数拠点を一本化、通信費削減">クラウドPBX</button>
-      <button class="sample-btn" data-sample="複合機リースとプリント保守、月額制で印刷コスト削減">複合機</button>
-      <button class="sample-btn" data-sample="法人向け生命保険、退職金準備と事業承継対策">法人保険</button>
-      <button class="sample-btn" data-sample="飲食店向けの業務用食材卸、配送つき">業務用食材</button>
-      <button class="sample-btn" data-sample="工場向け太陽光発電とPPA、初期費用ゼロで電気代削減・脱炭素">太陽光PPA</button>
-      <button class="sample-btn" data-sample="店舗向けPOSレジとキャッシュレス決済、Airレジ・Square連携">POSレジ</button>
-      <button class="sample-btn" data-sample="クラウドサイン型の電子契約、印紙代削減・リモート締結">電子契約</button>
-      <button class="sample-btn" data-sample="MEO対策と口コミ管理、Googleマイビジネス運用代行">MEO対策</button>
-      <button class="sample-btn" data-sample="Instagram・TikTokのSNS運用代行、ショート動画制作付き">SNS運用</button>
-      <button class="sample-btn" data-sample="売掛金ファクタリング、最短即日入金、銀行融資が難しい中小企業向け">ファクタリング</button>
-      <button class="sample-btn" data-sample="後継者不在の中小企業向けM&A仲介、事業承継支援">M&A仲介</button>
-      <button class="sample-btn" data-sample="法人向け防犯カメラとクラウド録画、AI顔認証で入退室管理も">防犯カメラ</button>
-      <button class="sample-btn" data-sample="バックオフィスのRPA導入支援、定型業務の自動化、UiPath代理店">RPA</button>
-      <button class="sample-btn" data-sample="ECサイト構築Shopify代理店、ネットショップ販路拡大支援">EC構築</button>
-      <button class="sample-btn" data-sample="法人向けカーリースと社用車管理、メンテナンス込み月額制">カーリース</button>
-      <button class="sample-btn" data-sample="生成AIチャットボットでカスタマーサポート自動化">AIチャット</button>
+  <section class="panel" id="onboarding-panel">
+    <h2>はじめに：企業リストを登録しましょう</h2>
+    <p>このサイトは静的サイトで、データはあなたのブラウザ（localStorage）に保存されます。Anthropic以外の外部にデータは送られません。</p>
+    <div class="onboard-grid">
+      <div class="onboard-card">
+        <div class="onboard-num">①</div>
+        <h3>CSV/JSONで一括取込</h3>
+        <p>タウンページ・Musubu・BizMaps・自社収集リストなどのCSVをそのまま取込めます。</p>
+        <button class="onboard-btn" data-action="open-import">CSV/JSONを選ぶ</button>
+        <button class="onboard-btn ghost" data-action="download-template">テンプレCSVを取得</button>
+      </div>
+      <div class="onboard-card">
+        <div class="onboard-num">②</div>
+        <h3>HPスクレイパーで自動収集</h3>
+        <p>シードCSVを GitHub に置くと、Actions が週次でHPを巡回し電話・問い合わせURLを抽出します。</p>
+        <a class="onboard-btn ghost" href="https://github.com/playmark0227-svg/Tell/blob/main/scripts/enrich.py" target="_blank">scripts/enrich.py を見る</a>
+      </div>
+      <div class="onboard-card">
+        <div class="onboard-num">③</div>
+        <h3>個別追加</h3>
+        <p>手元の少数企業を1社ずつ登録できます。サイドバーから。</p>
+        <button class="onboard-btn ghost" data-action="open-sidebar">サイドバーを開く</button>
+      </div>
+      <div class="onboard-card">
+        <div class="onboard-num">④</div>
+        <h3>動作確認したい</h3>
+        <p>架空のサンプル企業60社を読み込んで、すぐ動作を試せます。</p>
+        <button class="onboard-btn" data-action="load-sample">サンプル60社を読込</button>
+      </div>
     </div>
   </section>
 
+  <section class="panel">
+    <h2>1. 商材を入力</h2>
+    <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
+    <button id="analyze-btn">商材を分析して検索</button>
+    <details class="samples-toggle">
+      <summary>クイックテンプレ（タップで入力欄に挿入）</summary>
+      <div class="samples">
+        <button class="sample-btn" data-sample="中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え">勤怠SaaS</button>
+        <button class="sample-btn" data-sample="法人向け新電力サービス、電気代を10%削減できる切り替え提案">新電力</button>
+        <button class="sample-btn" data-sample="クラウドPBXとIP電話、複数拠点を一本化、通信費削減">クラウドPBX</button>
+        <button class="sample-btn" data-sample="複合機リースとプリント保守、月額制で印刷コスト削減">複合機</button>
+        <button class="sample-btn" data-sample="法人向け生命保険、退職金準備と事業承継対策">法人保険</button>
+        <button class="sample-btn" data-sample="飲食店向けの業務用食材卸、配送つき">業務用食材</button>
+        <button class="sample-btn" data-sample="工場向け太陽光発電とPPA、初期費用ゼロで電気代削減・脱炭素">太陽光PPA</button>
+        <button class="sample-btn" data-sample="店舗向けPOSレジとキャッシュレス決済、Airレジ・Square連携">POSレジ</button>
+        <button class="sample-btn" data-sample="クラウドサイン型の電子契約、印紙代削減・リモート締結">電子契約</button>
+        <button class="sample-btn" data-sample="MEO対策と口コミ管理、Googleマイビジネス運用代行">MEO対策</button>
+        <button class="sample-btn" data-sample="Instagram・TikTokのSNS運用代行、ショート動画制作付き">SNS運用</button>
+        <button class="sample-btn" data-sample="売掛金ファクタリング、最短即日入金、銀行融資が難しい中小企業向け">ファクタリング</button>
+        <button class="sample-btn" data-sample="後継者不在の中小企業向けM&A仲介、事業承継支援">M&A仲介</button>
+        <button class="sample-btn" data-sample="法人向け防犯カメラとクラウド録画、AI顔認証で入退室管理も">防犯カメラ</button>
+        <button class="sample-btn" data-sample="バックオフィスのRPA導入支援、定型業務の自動化、UiPath代理店">RPA</button>
+        <button class="sample-btn" data-sample="ECサイト構築Shopify代理店、ネットショップ販路拡大支援">EC構築</button>
+        <button class="sample-btn" data-sample="法人向けカーリースと社用車管理、メンテナンス込み月額制">カーリース</button>
+        <button class="sample-btn" data-sample="生成AIチャットボットでカスタマーサポート自動化">AIチャット</button>
+        <button class="sample-btn" data-sample="法人向けウォーターサーバー、月額制、来客対応と従業員福利厚生向け">ウォーターサーバー</button>
+      </div>
+    </details>
+  </section>
+
   <section class="panel" id="classification-section" hidden>
-    <h2>2. AIによる商材判別</h2>
+    <h2>2. 商材判別</h2>
     <div id="classification-display"></div>
   </section>
 
   <section class="panel" id="strategy-section" hidden>
-    <h2>3. AI戦略分析 <span class="muted">— 誰が買うか</span></h2>
+    <h2>3. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
     <div id="strategy-display"></div>
   </section>
 
@@ -269,8 +316,8 @@
 
 <footer>
   <div class="container">
-    <p>サイドバーで保存・DNC・架電履歴・CSV出力まで管理できます。データはブラウザ内（localStorage）に保存されます。</p>
-    <p><a href="https://github.com/playmark0227-svg/Tell">GitHubリポジトリ</a></p>
+    <p>tell partner — B2B営業リスト適合度スコアリングツール</p>
+    <p><a href="https://github.com/playmark0227-svg/Tell">GitHubリポジトリ</a> / データはあなたのブラウザ内（localStorage）に保存されます</p>
   </div>
 </footer>
 
@@ -299,6 +346,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260512j"></script>
+<script src="app.js?v=20260513a"></script>
 </body>
 </html>
