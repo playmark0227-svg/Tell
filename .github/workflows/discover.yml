@@ -24,13 +24,14 @@ jobs:
 
       - name: Run discoverer
         env:
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           GOOGLE_CSE_API_KEY: ${{ secrets.GOOGLE_CSE_API_KEY }}
           GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MERGE_WITH_EXISTING: "true"
         run: |
-          if [ -z "$GOOGLE_CSE_API_KEY" ] || [ -z "$GOOGLE_CSE_ID" ]; then
-            echo "::error::Secretsが未設定。Settings → Secrets → Actions で GOOGLE_CSE_API_KEY と GOOGLE_CSE_ID を登録してください"
+          if [ -z "$BRAVE_API_KEY" ] && ([ -z "$GOOGLE_CSE_API_KEY" ] || [ -z "$GOOGLE_CSE_ID" ]); then
+            echo "::error::検索プロバイダのSecretsが未設定。BRAVE_API_KEY、または GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID を登録してください"
             exit 1
           fi
           if [ ! -f scripts/intents.json ]; then

@@ -1,15 +1,19 @@
 """
-tell partner - Google CSE による企業発見＋HP巡回
+tell partner - Brave Search / Google CSE による企業発見＋HP巡回
 
-商材ごとのターゲット条件から Google Custom Search クエリを生成し、
-ヒットしたHPから電話番号・問い合わせURLを抽出して
-data/companies.json を生成・更新する。
+商材ごとのターゲット条件から検索クエリを生成し、ヒットしたHPから
+電話番号・問い合わせURLを抽出して data/companies.json を生成・更新する。
+
+検索プロバイダ:
+  Brave Search API（推奨・無料2000クエリ/月・全ウェブ検索OK）
+  または Google Custom Search API（無料100クエリ/日・登録サイトのみ）
 
 環境変数:
-  GOOGLE_CSE_API_KEY  必須 (https://console.cloud.google.com/ で取得)
-  GOOGLE_CSE_ID       必須 (https://programmablesearchengine.google.com/ で取得)
-  ANTHROPIC_API_KEY   任意 (設定するとClaude APIでクエリ生成・企業判定が高精度化)
-  MERGE_WITH_EXISTING 任意 (true なら既存 data/companies.json と統合)
+  BRAVE_API_KEY       Brave使用時に必須 (https://brave.com/search/api/)
+  GOOGLE_CSE_API_KEY  Google使用時に必須
+  GOOGLE_CSE_ID       Google使用時に必須
+  ANTHROPIC_API_KEY   任意 (クエリ生成精度向上)
+  MERGE_WITH_EXISTING 任意 (true なら既存JSONと統合)
 
 使い方:
   python scripts/discover.py
@@ -30,14 +34,19 @@ ROOT = Path(__file__).resolve().parents[1]
 INTENTS_PATH = ROOT / "scripts" / "intents.json"
 OUT_PATH = ROOT / "data" / "companies.json"
 
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY", "")
 GOOGLE_CSE_ID = os.environ.get("GOOGLE_CSE_ID", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 MERGE_WITH_EXISTING = os.environ.get("MERGE_WITH_EXISTING", "true").lower() == "true"
 
+USE_BRAVE = bool(BRAVE_API_KEY)
+USE_GOOGLE = bool(GOOGLE_API_KEY and GOOGLE_CSE_ID) and not USE_BRAVE
+
 USER_AGENT = "tell-partner-bot/1.0 (+https://github.com/playmark0227-svg/Tell)"
 REQUEST_TIMEOUT = 15
 PER_DOMAIN_DELAY = 1.2
+BRAVE_DELAY = 1.05  # 1req/sec制限を守るため
 
 PHONE_RE = re.compile(
     r"(?<![0-9])"
@@ -48,7 +57,6 @@ PHONE_RE = re.compile(
 
 CONTACT_KEYWORDS = ["contact", "inquiry", "toiawase", "問い合わせ", "問合せ", "お問い合わせ"]
 
-# 検索ノイズになるドメインを除外
 EXCLUDED_DOMAINS = {
     "asahi.com", "nikkei.com", "mainichi.jp", "yomiuri.co.jp", "sankei.com",
     "rikunabi.com", "mynavi.jp", "indeed.com", "doda.jp", "type.jp",
@@ -58,7 +66,7 @@ EXCLUDED_DOMAINS = {
     "facebook.com", "twitter.com", "x.com", "instagram.com", "linkedin.com",
     "youtube.com", "tiktok.com",
     "prtimes.jp", "atpress.ne.jp",
-    "houjin-bangou.nta.go.jp",
+    "houjin-bangou.nta.go.jp", "search.brave.com",
 }
 
 
@@ -98,12 +106,11 @@ class LinkExtractor(HTMLParser):
             self._buf.append(data)
 
 
-def google_search(query: str, start: int = 1, num: int = 10) -> list[dict]:
+def google_search(query: str, num: int = 10) -> list[dict]:
     params = {
         "key": GOOGLE_API_KEY,
         "cx": GOOGLE_CSE_ID,
         "q": query,
-        "start": start,
         "num": min(num, 10),
         "lr": "lang_ja",
         "gl": "jp",
@@ -114,10 +121,50 @@ def google_search(query: str, start: int = 1, num: int = 10) -> list[dict]:
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
             data = json.loads(r.read())
-            return data.get("items", [])
+            items = data.get("items", []) or []
+            return [{"link": x.get("link"), "title": x.get("title", ""), "snippet": x.get("snippet", "")} for x in items]
     except Exception as e:
         print(f"  google_search failed: {query}: {e}", file=sys.stderr)
         return []
+
+
+_last_brave_call = 0.0
+def brave_search(query: str, num: int = 10) -> list[dict]:
+    global _last_brave_call
+    delta = time.time() - _last_brave_call
+    if delta < BRAVE_DELAY:
+        time.sleep(BRAVE_DELAY - delta)
+    params = {
+        "q": query,
+        "count": min(num, 20),
+        "country": "JP",
+        "search_lang": "jp",
+        "ui_lang": "ja-JP",
+        "result_filter": "web",
+    }
+    url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={
+        "X-Subscription-Token": BRAVE_API_KEY,
+        "Accept": "application/json",
+        "Accept-Encoding": "identity",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+            data = json.loads(r.read())
+        _last_brave_call = time.time()
+        results = (data.get("web", {}) or {}).get("results", []) or []
+        return [{"link": x.get("url"), "title": x.get("title", ""), "snippet": x.get("description", "")} for x in results]
+    except Exception as e:
+        print(f"  brave_search failed: {query}: {e}", file=sys.stderr)
+        return []
+
+
+def web_search(query: str, num: int = 10) -> list[dict]:
+    if USE_BRAVE:
+        return brave_search(query, num=num)
+    if USE_GOOGLE:
+        return google_search(query, num=num)
+    return []
 
 
 def fetch_html(url: str) -> str:
@@ -345,7 +392,7 @@ def discover_for_product(product: dict, next_id: int, last_per_domain: dict) -> 
 
     for q in queries:
         print(f"  q: {q}", file=sys.stderr)
-        items = google_search(q, num=max_per_q)
+        items = web_search(q, num=max_per_q)
         for item in items:
             link = item.get("link", "")
             if not link or is_excluded(link):
@@ -386,9 +433,10 @@ def discover_for_product(product: dict, next_id: int, last_per_domain: dict) -> 
 
 
 def main() -> int:
-    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-        print("環境変数 GOOGLE_CSE_API_KEY と GOOGLE_CSE_ID が必要です", file=sys.stderr)
+    if not (USE_BRAVE or USE_GOOGLE):
+        print("検索プロバイダの環境変数が未設定です。BRAVE_API_KEY か GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID を設定してください", file=sys.stderr)
         return 1
+    print(f"検索プロバイダ: {'Brave Search API' if USE_BRAVE else 'Google CSE'}", file=sys.stderr)
 
     if not INTENTS_PATH.exists():
         print(f"intents file not found: {INTENTS_PATH}", file=sys.stderr)
