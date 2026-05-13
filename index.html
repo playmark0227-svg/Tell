@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513c">
+<link rel="stylesheet" href="style.css?v=20260513d">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -134,12 +134,14 @@
   <div class="sidebar-section collapsible" data-open="true">
     <div class="side-head"><span>🌐 ウェブ検索（Brave）</span><span class="badge" id="badge-brave">OFF</span></div>
     <div class="side-body">
-      <label class="side-label">Brave Search APIキー</label>
-      <input type="password" id="opt-brave-key" placeholder="BSA...">
+      <label class="side-label">プロキシURL（Cloudflare Worker）</label>
+      <input type="text" id="opt-brave-proxy" placeholder="https://xxx.workers.dev">
+      <label class="side-label" style="margin-top:8px;">Brave APIキー（プロキシ未設定時のみ使用・通常は空でOK）</label>
+      <input type="password" id="opt-brave-key" placeholder="BSA... (オプション)">
       <button class="side-btn" id="brave-test">接続テスト</button>
       <div id="brave-status" class="empty">未接続</div>
       <p class="empty" style="font-size:11px;line-height:1.5;margin-top:6px;">
-        ⚠️ APIキーはブラウザのlocalStorageにのみ保存され、Brave以外には送信されません。
+        ⚠️ Brave APIはブラウザ直接呼び出し不可(CORS)。<a href="https://github.com/playmark0227-svg/Tell/blob/claude/docomo-phone-list-0fW8S/worker/brave-proxy.js" target="_blank">worker/brave-proxy.js</a> をCloudflare Workerにデプロイして、そのURLを上に貼ってください（無料・5分）。
       </p>
     </div>
   </div>
@@ -411,6 +413,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513c"></script>
+<script src="app.js?v=20260513d"></script>
 </body>
 </html>

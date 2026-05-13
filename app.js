@@ -1076,7 +1076,7 @@ const store = {
   followUps: [],     // [{id, t}] next-callback queue
   profiles: [],      // [{id, name, productText, icp, strategy, classification, savedAt}]
   activeProfile: null,
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '' },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '' },
 };
 
 function loadStore() {
@@ -1617,7 +1617,9 @@ function extractPhoneFromText(text) {
 
 const _braveLastCall = { t: 0 };
 async function braveSearch(query, count = 10) {
-  if (!store.opts.braveKey) throw new Error('Brave APIキー未設定');
+  const hasProxy = !!store.opts.braveProxy;
+  if (!hasProxy && !store.opts.braveKey) throw new Error('プロキシURLかAPIキーを設定してください');
+
   // 1req/sec を守る
   const delta = Date.now() - _braveLastCall.t;
   if (delta < 1100) await new Promise(r => setTimeout(r, 1100 - delta));
@@ -1628,12 +1630,29 @@ async function braveSearch(query, count = 10) {
     country: 'JP', search_lang: 'jp', ui_lang: 'ja-JP',
     result_filter: 'web',
   });
-  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
-    headers: {
+
+  let url, headers;
+  if (hasProxy) {
+    const base = store.opts.braveProxy.replace(/\/+$/, '');
+    url = `${base}/search?${params}`;
+    headers = { 'Accept': 'application/json' };
+  } else {
+    url = `https://api.search.brave.com/res/v1/web/search?${params}`;
+    headers = {
       'X-Subscription-Token': store.opts.braveKey,
       'Accept': 'application/json',
-    },
-  });
+    };
+  }
+
+  let res;
+  try {
+    res = await fetch(url, { headers });
+  } catch (e) {
+    if (!hasProxy) {
+      throw new Error('CORSエラー: Brave APIはブラウザ直接呼出不可。Cloudflare Workerプロキシを設定してください');
+    }
+    throw new Error(`プロキシ接続失敗: ${e.message}`);
+  }
   if (!res.ok) throw new Error(`Brave API ${res.status}: ${(await res.text()).slice(0,150)}`);
   const data = await res.json();
   return (data.web?.results || []);
@@ -1705,7 +1724,7 @@ function parseCompanyFromResult(r, idx) {
 }
 
 async function discoverFromBrave(productText, icp, onProgress) {
-  if (!store.opts.braveKey) throw new Error('Brave APIキーを設定してください');
+  if (!store.opts.braveKey && !store.opts.braveProxy) throw new Error('Brave のプロキシURLまたはAPIキーを設定してください');
   const queries = await aiGenerateQueries(productText, icp);
   onProgress?.(`検索クエリ ${queries.length}件を生成`);
   const all = getAllCompanies();
@@ -1844,7 +1863,7 @@ async function runPipeline(input, options = {}) {
   }
   // Brave APIキーがあって discoverモードなら、ウェブから企業発見
   const progEl = document.getElementById('discovery-progress');
-  if (discover && store.opts.braveKey) {
+  if (discover && (store.opts.braveKey || store.opts.braveProxy)) {
     progEl.hidden = false;
     progEl.classList.remove('done', 'error');
     progEl.textContent = '商材を分析してターゲット企業を検索中…';
@@ -1858,10 +1877,10 @@ async function runPipeline(input, options = {}) {
       progEl.classList.add('error');
       progEl.textContent = `発見失敗: ${e.message}`;
     }
-  } else if (discover && !store.opts.braveKey) {
+  } else if (discover && !store.opts.braveKey && !store.opts.braveProxy) {
     progEl.hidden = false;
     progEl.classList.add('error');
-    progEl.textContent = '⚠ Brave APIキーが未設定。サイドバー「🌐 ウェブ検索」から登録してください';
+    progEl.textContent = '⚠ ウェブ検索が未設定。サイドバー「🌐 ウェブ検索」でCloudflare WorkerプロキシURLを登録してください';
   }
 
   const allCompanies = getAllCompanies();
@@ -1922,7 +1941,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513c');
+    const res = await fetch('data/companies.json?v=20260513d');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -1960,10 +1979,20 @@ async function init() {
   // プロファイル保存
   document.getElementById('prof-save').addEventListener('click', saveProfile);
   document.getElementById('opt-brave-key').value = store.opts.braveKey || '';
-  document.getElementById('badge-brave').textContent = store.opts.braveKey ? 'ON' : 'OFF';
+  document.getElementById('opt-brave-proxy').value = store.opts.braveProxy || '';
+  const updateBraveBadge = () => {
+    const on = !!(store.opts.braveKey || store.opts.braveProxy);
+    document.getElementById('badge-brave').textContent = on ? 'ON' : 'OFF';
+  };
+  updateBraveBadge();
   document.getElementById('opt-brave-key').addEventListener('input', e => {
     store.opts.braveKey = e.target.value.trim();
-    document.getElementById('badge-brave').textContent = store.opts.braveKey ? 'ON' : 'OFF';
+    updateBraveBadge();
+    saveStore();
+  });
+  document.getElementById('opt-brave-proxy').addEventListener('input', e => {
+    store.opts.braveProxy = e.target.value.trim();
+    updateBraveBadge();
     saveStore();
   });
   document.getElementById('brave-test').addEventListener('click', async () => {
@@ -2152,7 +2181,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513c');
+      const res = await fetch('data/sample.json?v=20260513d');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
