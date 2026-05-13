@@ -148,7 +148,7 @@ body {
 .file-label { display: block; }
 .file-label input { display: none; }
 
-#search-box, .sidebar input[type=text], .sidebar select, .sidebar textarea {
+#search-box, .sidebar input[type=text], .sidebar input[type=password], .sidebar select, .sidebar textarea {
   width: 100%;
   background: rgba(255,255,255,0.06);
   border: 1px solid var(--sidebar-border);

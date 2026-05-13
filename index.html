@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング（デモ）</title>
-<link rel="stylesheet" href="style.css?v=20260512i">
+<link rel="stylesheet" href="style.css?v=20260512j">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -101,6 +101,28 @@
       <label class="side-btn file-label">JSON取込
         <input type="file" id="import-file" accept=".json" hidden>
       </label>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>🤖 AI設定（Claude API）</span><span class="badge" id="badge-ai">OFF</span></div>
+    <div class="side-body">
+      <label class="kv"><span>AIモードを使用</span>
+        <input type="checkbox" id="opt-ai-enabled">
+      </label>
+      <label class="side-label" style="margin-top:8px;">Anthropic APIキー</label>
+      <input type="password" id="opt-ai-key" placeholder="sk-ant-...">
+      <label class="side-label" style="margin-top:8px;">モデル</label>
+      <select id="opt-ai-model">
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価）</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6（バランス）</option>
+        <option value="claude-opus-4-7">Opus 4.7（高精度・高価）</option>
+      </select>
+      <button class="side-btn" id="ai-test">接続テスト</button>
+      <div id="ai-status" class="empty">未接続</div>
+      <p class="empty" style="font-size:11px;line-height:1.5;margin-top:6px;">
+        ⚠️ APIキーはあなたのブラウザ(localStorage)にのみ保存され、Anthropic以外には送信されません。共有端末では使用しないでください。
+      </p>
     </div>
   </div>
 
@@ -277,6 +299,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260512i"></script>
+<script src="app.js?v=20260512j"></script>
 </body>
 </html>

@@ -36,6 +36,48 @@
 3. 業種・規模・キーワード・想定課題の一致度でスコアリング
 4. 適合度順に表示、フィルタで絞り込み
 
+## AIモード（Claude API、BYOK）
+
+サイドバーの「🤖 AI設定」から：
+
+1. **Anthropic APIキー**を入力（[console.anthropic.com](https://console.anthropic.com/) で取得）
+2. **AIモードを使用**にチェック
+3. **接続テスト**で疎通確認
+4. 以降の「商材分析」と「架電スクリプト生成」でClaude APIを使用
+
+APIキーは**あなたのブラウザのlocalStorageにのみ保存**され、`api.anthropic.com` 以外には送信されません。共有端末では使わないでください。
+
+モデル選択：
+- **Haiku 4.5**：速い・安価（推奨）
+- **Sonnet 4.6**：バランス
+- **Opus 4.7**：高精度・高価
+
+## スクレイピング基盤（GitHub Actions）
+
+実在企業のデータを収集する Python スクリプトと GitHub Actions ワークフローが入っています。
+
+### 仕組み
+
+1. `scripts/seeds.json` に対象企業のシード（会社名 + 既知の website URL）を記述
+2. `scripts/enrich.py` が各企業のHPを巡回し、電話番号・問い合わせURLを抽出
+3. `data/companies.json` を更新
+4. `.github/workflows/enrich.yml` が**週次（月曜 03:00 JST）**に自動実行
+
+### ローカル実行
+
+```bash
+cp scripts/seeds.example.json scripts/seeds.json
+# scripts/seeds.json を編集して対象企業を追加
+python scripts/enrich.py
+```
+
+### 遵守事項
+
+- **robots.txt遵守**：`urllib.robotparser` で都度確認
+- **1ドメインあたり1.2秒以上のディレイ**
+- **公開HPの公開情報のみ**：個人宅・個人情報は対象外
+- **User-Agent明示**：`tell-partner-bot/0.1`
+
 ## 本番化する場合の構成
 
 ```

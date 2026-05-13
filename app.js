@@ -955,7 +955,7 @@ const store = {
   notes: {},
   history: [],
   customCompanies: [],
-  opts: { excludeDnc: true, savedOnly: false },
+  opts: { excludeDnc: true, savedOnly: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001' },
 };
 
 function loadStore() {
@@ -1031,12 +1031,24 @@ function openNote(id) {
   modal.hidden = false;
 }
 
-function openScript(company) {
+async function openScript(company) {
   const modal = document.getElementById('script-modal');
   document.getElementById('script-meta').textContent =
-    `${company.name} / ${company.industry} / ${company.prefecture} / 適合度 ${company.score}`;
-  document.getElementById('script-text').textContent = generateScript(company);
+    `${company.name} / ${company.industry} / ${company.prefecture}${company.city?' '+company.city:''} / 適合度 ${company.score}`;
+  const textEl = document.getElementById('script-text');
   modal.hidden = false;
+  if (store.opts.aiEnabled && store.opts.aiKey && state.icp && state.strategy) {
+    textEl.textContent = '🤖 Claude が生成中…';
+    try {
+      const productText = document.getElementById('product-input').value.trim();
+      const script = await aiScript(company, productText, state.icp, state.strategy);
+      textEl.textContent = script;
+    } catch (e) {
+      textEl.textContent = `(AI失敗: ${e.message})\n\n` + generateScript(company);
+    }
+  } else {
+    textEl.textContent = generateScript(company);
+  }
 }
 
 function generateScript(company) {
@@ -1243,12 +1255,123 @@ function importJson(file) {
   reader.readAsText(file);
 }
 
+/* ============ Claude API (BYOK) ============ */
+async function callClaude({ system, prompt, max_tokens = 1024 }) {
+  if (!store.opts.aiKey) throw new Error('APIキーが未設定です');
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': store.opts.aiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: store.opts.aiModel || 'claude-haiku-4-5-20251001',
+      max_tokens,
+      system,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Claude API ${res.status}: ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.content?.[0]?.text || '';
+}
+
+function extractJson(text) {
+  const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const raw = m ? m[1] : text;
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('JSONが見つかりません');
+  return JSON.parse(raw.slice(start, end + 1));
+}
+
+async function aiAnalyzeProduct(productText) {
+  const system = `あなたはB2B営業戦略のシニアコンサルタントです。商材テキストから、誰が買うか・どんな課題を解決するかを分析し、構造化されたJSONで応答してください。日本市場のB2B営業を想定してください。`;
+  const prompt = `以下の商材を分析し、JSONのみで返してください。
+
+商材: ${productText}
+
+形式:
+{
+  "category_name": "商材カテゴリ名",
+  "confidence": "high|medium|low",
+  "icp": {
+    "industries": ["想定業種を3〜6個", "日本標準産業分類の名称で"],
+    "sizes": ["small(〜50名)", "mid(51-300)", "large(301+)"の該当のみ],
+    "pains": ["想定課題を3〜5個（具体的に）"],
+    "keywords": ["企業説明文に含まれていそうなキーワードを5〜8個"]
+  },
+  "strategy": {
+    "persona": "理想顧客像を1〜2文で",
+    "decision_maker": "想定決裁者の肩書",
+    "motivation": "購入動機・価値訴求ポイント",
+    "avoid": "避けるべき対象企業の特徴",
+    "target_signals": ["has_office","has_factory","has_store","has_field_work","has_remote","has_24h","pain_recruitment","pain_efficiency","pain_cost","pain_compliance","pain_sales","pain_succession","pain_funding","pain_old_hp","pain_welfare" から該当を選択"],
+    "avoid_signals": ["上記から避けるシグナルを選択"]
+  }
+}
+
+JSON以外は出力しないでください。`;
+  const text = await callClaude({ system, prompt, max_tokens: 1500 });
+  return extractJson(text);
+}
+
+async function aiScript(company, productText, icp, strategy) {
+  const system = `あなたは特定商取引法を熟知したB2B営業のシニアコンサルタントです。架電スクリプトを生成してください。冒頭の事業者名・勧誘目的の明示、再勧誘禁止への配慮を必ず含めてください。`;
+  const prompt = `以下の情報から、自然で実用的な架電スクリプトを日本語で作成してください。
+
+【商材】${productText}
+【ターゲット企業】${company.name} / ${company.industry} / ${company.prefecture}${company.city||''} / 従業員${company.employees}名
+【事業内容メモ】${company.description}
+【想定課題】${icp.pains?.join('、')}
+【決裁者】${strategy.decision_maker}
+【購入動機】${strategy.motivation}
+
+構成:
+■ オープニング（事業者名・勧誘目的明示）
+■ 仮説提示（業種・規模・課題を踏まえた切り口）
+■ 現状ヒアリング（質問2〜3個）
+■ クロージング（次のアクション提示）
+■ コンプライアンス注意点
+
+スクリプト全文を返してください。`;
+  return await callClaude({ system, prompt, max_tokens: 1500 });
+}
+
 /* ============ Pipeline ============ */
-function runPipeline(input) {
-  state.classification = classifyProduct(input);
-  state.icp = state.classification.category.icp;
-  state.strategy = inferStrategy(state.classification.category, state.icp);
-  state.intentSignals = analyzeProductIntent(input);
+async function runPipeline(input) {
+  if (store.opts.aiEnabled && store.opts.aiKey) {
+    setAIStatus('分析中…', 'mid');
+    try {
+      const result = await aiAnalyzeProduct(input);
+      state.classification = {
+        category: { id: 'ai', name: result.category_name, icp: result.icp },
+        confidence: result.confidence || 'high',
+        alternatives: [],
+      };
+      state.icp = { ...result.icp, anti_patterns: [] };
+      state.strategy = result.strategy;
+      state.intentSignals = result.strategy.target_signals || [];
+      setAIStatus('AI分析完了 ✓', 'good');
+    } catch (e) {
+      console.error('AI分析失敗', e);
+      setAIStatus(`AI失敗: ${e.message.slice(0,60)} → ルールベース動作`, 'low');
+      state.classification = classifyProduct(input);
+      state.icp = state.classification.category.icp;
+      state.strategy = inferStrategy(state.classification.category, state.icp);
+      state.intentSignals = analyzeProductIntent(input);
+    }
+  } else {
+    state.classification = classifyProduct(input);
+    state.icp = state.classification.category.icp;
+    state.strategy = inferStrategy(state.classification.category, state.icp);
+    state.intentSignals = analyzeProductIntent(input);
+  }
   const allCompanies = [...state.companies, ...store.customCompanies];
   state.scored = allCompanies
     .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
@@ -1259,6 +1382,13 @@ function runPipeline(input) {
   renderFilters();
   renderResults();
   renderSidebar();
+}
+
+function setAIStatus(msg, level) {
+  const el = document.getElementById('ai-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = level === 'good' ? 'var(--good)' : level === 'low' ? 'var(--danger)' : 'var(--mid)';
 }
 
 function renderStrategy(strategy, scored) {
@@ -1300,7 +1430,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512i');
+    const res = await fetch('data/companies.json?v=20260512j');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
@@ -1314,17 +1444,47 @@ async function init() {
 
   document.getElementById('opt-exclude-dnc').checked = store.opts.excludeDnc;
   document.getElementById('opt-saved-only').checked = store.opts.savedOnly;
+  document.getElementById('opt-ai-enabled').checked = !!store.opts.aiEnabled;
+  document.getElementById('opt-ai-key').value = store.opts.aiKey || '';
+  document.getElementById('opt-ai-model').value = store.opts.aiModel || 'claude-haiku-4-5-20251001';
+  document.getElementById('badge-ai').textContent = store.opts.aiEnabled ? 'ON' : 'OFF';
 
-  document.getElementById('analyze-btn').addEventListener('click', () => {
+  document.getElementById('opt-ai-enabled').addEventListener('change', e => {
+    store.opts.aiEnabled = e.target.checked;
+    document.getElementById('badge-ai').textContent = store.opts.aiEnabled ? 'ON' : 'OFF';
+    saveStore();
+    if (store.opts.aiEnabled) setAIStatus('AIモード ON。キー設定済みなら次の分析からClaudeを使用', 'good');
+    else setAIStatus('AIモード OFF（ルールベース）', 'mid');
+  });
+  document.getElementById('opt-ai-key').addEventListener('input', e => {
+    store.opts.aiKey = e.target.value.trim();
+    saveStore();
+  });
+  document.getElementById('opt-ai-model').addEventListener('change', e => {
+    store.opts.aiModel = e.target.value;
+    saveStore();
+  });
+  document.getElementById('ai-test').addEventListener('click', async () => {
+    if (!store.opts.aiKey) { setAIStatus('APIキーを入力してください', 'low'); return; }
+    setAIStatus('テスト中…', 'mid');
+    try {
+      const r = await callClaude({ system: '簡潔に「OK」とだけ返してください', prompt: 'ping', max_tokens: 16 });
+      setAIStatus(`接続成功 ✓ (${r.slice(0,20)})`, 'good');
+    } catch (e) {
+      setAIStatus(`接続失敗: ${e.message.slice(0,80)}`, 'low');
+    }
+  });
+
+  document.getElementById('analyze-btn').addEventListener('click', async () => {
     const input = document.getElementById('product-input').value.trim();
     if (!input) { alert('商材を入力してください'); return; }
-    runPipeline(input);
+    await runPipeline(input);
   });
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       document.getElementById('product-input').value = btn.dataset.sample;
-      runPipeline(btn.dataset.sample);
+      await runPipeline(btn.dataset.sample);
     });
   });
 

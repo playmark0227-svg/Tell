@@ -1,0 +1,43 @@
+name: Enrich Company Data
+
+on:
+  schedule:
+    - cron: "0 18 * * 0"  # 毎週月曜 03:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run enricher
+        run: |
+          if [ ! -f scripts/seeds.json ]; then
+            echo "scripts/seeds.json が無いため、scripts/seeds.example.json を使います"
+            cp scripts/seeds.example.json scripts/seeds.json
+          fi
+          python scripts/enrich.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "tell-partner-bot"
+          git config user.email "bot@users.noreply.github.com"
+          if git diff --quiet data/companies.json; then
+            echo "No changes."
+          else
+            git add data/companies.json
+            git commit -m "chore(data): enrich company data $(date -u +%Y-%m-%d)"
+            git push
+          fi
