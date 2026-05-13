@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513a">
+<link rel="stylesheet" href="style.css?v=20260513b">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -59,6 +59,20 @@
     <div class="side-head"><span>📞 架電履歴</span><span class="badge" id="badge-history">0</span></div>
     <div class="side-body" id="history-list"><div class="empty">履歴なし</div></div>
     <button class="side-btn danger" id="clear-history">履歴をクリア</button>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="true">
+    <div class="side-head"><span>🗓️ 次回フォロー予定</span><span class="badge" id="badge-followup">0</span></div>
+    <div class="side-body" id="followup-list"><div class="empty">予定なし</div></div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false">
+    <div class="side-head"><span>📂 商材プロファイル</span><span class="badge" id="badge-profile">0</span></div>
+    <div class="side-body">
+      <input type="text" id="prof-name" placeholder="商材名（例: 勤怠SaaS）">
+      <button class="side-btn" id="prof-save">現在の分析を保存</button>
+      <div id="prof-list" style="margin-top:8px;"><div class="empty">未保存</div></div>
+    </div>
   </div>
 
   <div class="sidebar-section collapsible" data-open="false">
@@ -147,6 +161,9 @@
       </label>
       <label class="kv"><span>保存のみ表示</span>
         <input type="checkbox" id="opt-saved-only">
+      </label>
+      <label class="kv"><span>🌙 ダークモード</span>
+        <input type="checkbox" id="opt-dark">
       </label>
       <button class="side-btn danger" id="reset-all">全データをリセット</button>
     </div>
@@ -323,6 +340,37 @@
 
 </main>
 
+<div id="call-modal" class="modal" hidden>
+  <div class="modal-content">
+    <h3 id="call-title">架電記録</h3>
+    <div class="form-grid">
+      <label>結果
+        <select id="call-status">
+          <option value="connected">繋がった</option>
+          <option value="meeting">商談化</option>
+          <option value="absent">不在</option>
+          <option value="rejected">拒否</option>
+          <option value="wrong">担当者不明</option>
+          <option value="">未架電に戻す</option>
+        </select>
+      </label>
+      <label>通話時間（分）
+        <input type="text" id="call-duration" placeholder="例: 5">
+      </label>
+      <label>次回フォロー予定
+        <input type="text" id="call-next" placeholder="YYYY-MM-DD HH:MM（任意）">
+      </label>
+      <label class="full">通話メモ
+        <textarea id="call-memo" rows="3" placeholder="話した内容、相手の反応、次のアクション..."></textarea>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button id="call-save">記録を保存</button>
+      <button id="call-cancel" class="ghost">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <div id="note-modal" class="modal" hidden>
   <div class="modal-content">
     <h3 id="note-title">メモ</h3>
@@ -346,6 +394,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513a"></script>
+<script src="app.js?v=20260513b"></script>
 </body>
 </html>

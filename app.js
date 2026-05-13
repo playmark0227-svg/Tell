@@ -20,6 +20,30 @@ function hasPhone(c) {
   return c.phone && !/^\(?未登録/.test(c.phone) && c.phone.trim() !== '';
 }
 
+function normalizePhone(p) {
+  if (!p) return '';
+  return String(p).replace(/[^\d+]/g, '');
+}
+
+function dedupKey(c) {
+  const phone = normalizePhone(c.phone);
+  if (phone && phone.length >= 9) return `p:${phone}`;
+  return `n:${(c.name||'').trim()}|${(c.prefecture||'').trim()}|${(c.city||'').trim()}`;
+}
+
+function dedupCompanies(rows, existingKeys = new Set()) {
+  const seen = new Set(existingKeys);
+  const out = [];
+  let dupes = 0;
+  for (const r of rows) {
+    const k = dedupKey(r);
+    if (seen.has(k)) { dupes++; continue; }
+    seen.add(k);
+    out.push(r);
+  }
+  return { kept: out, dupes };
+}
+
 /* ============ CSV ============ */
 function parseCSVLine(line) {
   const out = [];
@@ -1048,7 +1072,11 @@ const store = {
   history: [],
   customCompanies: [],
   importedCompanies: [],
-  opts: { excludeDnc: true, savedOnly: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001' },
+  callRecords: {},   // companyId -> { duration, memo, next_t, last_t, outcome }
+  followUps: [],     // [{id, t}] next-callback queue
+  profiles: [],      // [{id, name, productText, icp, strategy, classification, savedAt}]
+  activeProfile: null,
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001' },
 };
 
 function loadStore() {
@@ -1063,6 +1091,10 @@ function loadStore() {
     store.history = d.history || [];
     store.customCompanies = d.customCompanies || [];
     store.importedCompanies = d.importedCompanies || [];
+    store.callRecords = d.callRecords || {};
+    store.followUps = d.followUps || [];
+    store.profiles = d.profiles || [];
+    store.activeProfile = d.activeProfile || null;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1076,6 +1108,10 @@ function saveStore() {
     history: store.history,
     customCompanies: store.customCompanies,
     importedCompanies: store.importedCompanies,
+    callRecords: store.callRecords,
+    followUps: store.followUps,
+    profiles: store.profiles,
+    activeProfile: store.activeProfile,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -1097,13 +1133,79 @@ function toggleDnc(id) {
 }
 
 function setStatus(id, status) {
+  // 結果が選ばれたら通話記録モーダルを開く
+  if (status === 'connected' || status === 'meeting' || status === 'absent' || status === 'rejected') {
+    openCallRecord(id, status);
+    return;
+  }
   if (status) store.status[id] = status;
   else delete store.status[id];
   store.history.unshift({ id, status: status || 'unset', t: Date.now() });
-  store.history = store.history.slice(0, 50);
+  store.history = store.history.slice(0, 100);
   saveStore();
   renderSidebar();
-  if (status === 'meeting' || status === 'rejected' || status === 'connected') renderResults();
+  renderResults();
+}
+
+function openCallRecord(id, status) {
+  const company = state.companies.concat(store.importedCompanies, store.customCompanies).find(c => c.id === id);
+  if (!company) return;
+  const modal = document.getElementById('call-modal');
+  modal.dataset.id = id;
+  document.getElementById('call-title').textContent = `架電記録: ${company.name}`;
+  document.getElementById('call-status').value = status;
+  const rec = store.callRecords[id] || {};
+  document.getElementById('call-duration').value = rec.duration || '';
+  document.getElementById('call-memo').value = rec.memo || '';
+  document.getElementById('call-next').value = rec.next_t ? formatLocalDT(new Date(rec.next_t)) : '';
+  modal.hidden = false;
+}
+
+function formatLocalDT(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function parseLocalDT(s) {
+  if (!s) return null;
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?$/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2]-1, +m[3], +(m[4]||9), +(m[5]||0));
+  return isNaN(d) ? null : d.getTime();
+}
+
+function saveCallRecord() {
+  const modal = document.getElementById('call-modal');
+  const id = parseInt(modal.dataset.id, 10);
+  const status = document.getElementById('call-status').value;
+  const duration = document.getElementById('call-duration').value.trim();
+  const memo = document.getElementById('call-memo').value.trim();
+  const nextStr = document.getElementById('call-next').value.trim();
+  const next_t = parseLocalDT(nextStr);
+
+  if (status) store.status[id] = status;
+  else delete store.status[id];
+
+  store.callRecords[id] = {
+    outcome: status,
+    duration,
+    memo,
+    next_t,
+    last_t: Date.now(),
+  };
+
+  // フォローアップ更新
+  store.followUps = store.followUps.filter(f => f.id !== id);
+  if (next_t) store.followUps.push({ id, t: next_t });
+  store.followUps.sort((a,b) => a.t - b.t);
+
+  store.history.unshift({ id, status, t: Date.now(), memo: memo.slice(0,40) });
+  store.history = store.history.slice(0, 100);
+
+  saveStore();
+  modal.hidden = true;
+  renderResults();
+  renderSidebar();
 }
 
 function recordCall(id) {
@@ -1243,6 +1345,109 @@ function renderSidebar() {
     ? Math.round(calledScored.reduce((s,c) => s+c.score, 0) / calledScored.length)
     : null;
   document.getElementById('ana-avg-score').textContent = avg !== null ? avg : '-';
+
+  // フォローアップ表示
+  const all = getAllCompanies();
+  const fuEl = document.getElementById('followup-list');
+  const upcoming = store.followUps.filter(f => all.find(c => c.id === f.id)).slice(0, 10);
+  document.getElementById('badge-followup').textContent = upcoming.length;
+  if (fuEl) {
+    fuEl.innerHTML = upcoming.length === 0
+      ? '<div class="empty">予定なし</div>'
+      : upcoming.map(f => {
+          const c = all.find(co => co.id === f.id);
+          const dt = new Date(f.t);
+          const overdue = f.t < Date.now();
+          return `<div class="followup-item">
+            <div class="name">${c.name}
+              <div class="followup-when ${overdue?'overdue':''}">${overdue?'⚠ ':''}${formatLocalDT(dt)}</div>
+            </div>
+            <button class="x" data-fu-id="${f.id}" aria-label="削除">×</button>
+          </div>`;
+        }).join('');
+    fuEl.querySelectorAll('[data-fu-id]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.dataset.fuId, 10);
+        store.followUps = store.followUps.filter(f => f.id !== id);
+        saveStore(); renderSidebar();
+      });
+    });
+  }
+
+  // プロファイル表示
+  const profEl = document.getElementById('prof-list');
+  document.getElementById('badge-profile').textContent = store.profiles.length;
+  if (profEl) {
+    profEl.innerHTML = store.profiles.length === 0
+      ? '<div class="empty">未保存</div>'
+      : store.profiles.map(p => `
+        <div class="profile-item ${p.id===store.activeProfile?'active':''}">
+          <div class="name" title="${p.name}">${p.name}
+            <div class="followup-when">${new Date(p.savedAt).toLocaleDateString('ja-JP')}</div>
+          </div>
+          <div class="profile-actions">
+            <button data-prof-load="${p.id}" aria-label="切替">↻</button>
+            <button data-prof-del="${p.id}" aria-label="削除">×</button>
+          </div>
+        </div>
+      `).join('');
+    profEl.querySelectorAll('[data-prof-load]').forEach(b => {
+      b.addEventListener('click', () => loadProfile(parseInt(b.dataset.profLoad, 10)));
+    });
+    profEl.querySelectorAll('[data-prof-del]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = parseInt(b.dataset.profDel, 10);
+        if (!confirm('このプロファイルを削除しますか？')) return;
+        store.profiles = store.profiles.filter(p => p.id !== id);
+        if (store.activeProfile === id) store.activeProfile = null;
+        saveStore(); renderSidebar();
+      });
+    });
+  }
+}
+
+function saveProfile() {
+  const nameInput = document.getElementById('prof-name');
+  const name = nameInput.value.trim();
+  if (!name) { alert('プロファイル名を入力してください'); return; }
+  if (!state.icp) { alert('先に商材を分析してください'); return; }
+  const id = Date.now();
+  store.profiles.push({
+    id,
+    name,
+    productText: document.getElementById('product-input').value,
+    classification: state.classification,
+    icp: state.icp,
+    strategy: state.strategy,
+    intentSignals: state.intentSignals,
+    savedAt: Date.now(),
+  });
+  store.activeProfile = id;
+  saveStore();
+  nameInput.value = '';
+  renderSidebar();
+}
+
+function loadProfile(id) {
+  const p = store.profiles.find(pr => pr.id === id);
+  if (!p) return;
+  document.getElementById('product-input').value = p.productText || '';
+  state.classification = p.classification;
+  state.icp = p.icp;
+  state.strategy = p.strategy;
+  state.intentSignals = p.intentSignals || [];
+  store.activeProfile = id;
+  saveStore();
+  const all = getAllCompanies();
+  state.scored = all
+    .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
+    .sort((a, b) => b.score - a.score);
+  renderClassification(state.classification);
+  renderStrategy(state.strategy, state.scored);
+  renderICP(state.icp);
+  renderFilters();
+  renderResults();
+  renderSidebar();
 }
 
 /* ============ Filter integration ============ */
@@ -1529,7 +1734,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513a');
+    const res = await fetch('data/companies.json?v=20260513b');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -1544,6 +1749,28 @@ async function init() {
 
   document.getElementById('opt-exclude-dnc').checked = store.opts.excludeDnc;
   document.getElementById('opt-saved-only').checked = store.opts.savedOnly;
+  document.getElementById('opt-dark').checked = !!store.opts.dark;
+  if (store.opts.dark) document.documentElement.setAttribute('data-theme', 'dark');
+
+  document.getElementById('opt-dark').addEventListener('change', e => {
+    store.opts.dark = e.target.checked;
+    if (e.target.checked) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    saveStore();
+  });
+
+  // 通話記録モーダル
+  document.getElementById('call-save').addEventListener('click', saveCallRecord);
+  document.getElementById('call-cancel').addEventListener('click', () => {
+    document.getElementById('call-modal').hidden = true;
+    renderResults();
+  });
+  document.getElementById('call-modal').addEventListener('click', e => {
+    if (e.target.id === 'call-modal') { e.target.hidden = true; renderResults(); }
+  });
+
+  // プロファイル保存
+  document.getElementById('prof-save').addEventListener('click', saveProfile);
   document.getElementById('opt-ai-enabled').checked = !!store.opts.aiEnabled;
   document.getElementById('opt-ai-key').value = store.opts.aiKey || '';
   document.getElementById('opt-ai-model').value = store.opts.aiModel || 'claude-haiku-4-5-20251001';
@@ -1677,17 +1904,26 @@ async function init() {
       } else {
         rows = parseCSV(text);
       }
-      if (!confirm(`${rows.length}件を取り込みます。既存の取込データを置き換えますか？\n(キャンセルで追加)`)) {
-        rows.forEach((r, i) => { r.id = 200000 + store.importedCompanies.length + i + 1; });
-        store.importedCompanies.push(...rows);
+      const replace = confirm(`${rows.length}件を取り込みます。\nOK: 既存を全て置き換え\nキャンセル: 既存に追加（重複は自動で除外）`);
+      let dupes = 0;
+      if (replace) {
+        const { kept, dupes: d } = dedupCompanies(rows);
+        kept.forEach((r, i) => { r.id = 200000 + i + 1; });
+        store.importedCompanies = kept;
+        dupes = d;
       } else {
-        rows.forEach((r, i) => { r.id = 200000 + i + 1; });
-        store.importedCompanies = rows;
+        const existingKeys = new Set(
+          [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
+        );
+        const { kept, dupes: d } = dedupCompanies(rows, existingKeys);
+        kept.forEach((r, i) => { r.id = 200000 + store.importedCompanies.length + i + 1; });
+        store.importedCompanies.push(...kept);
+        dupes = d;
       }
       saveStore();
       updateOnboarding();
       renderSidebar();
-      alert(`取込完了: 合計 ${store.importedCompanies.length}件`);
+      alert(`取込完了: 合計 ${store.importedCompanies.length}件${dupes > 0 ? `（重複 ${dupes}件を除外）` : ''}`);
       const input = document.getElementById('product-input').value.trim();
       if (input && state.scored.length > 0) runPipeline(input);
     } catch (err) {
@@ -1703,14 +1939,18 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513a');
+      const res = await fetch('data/sample.json?v=20260513b');
       const data = await res.json();
-      data.forEach((r, i) => { r.id = 300000 + i + 1; });
-      store.importedCompanies.push(...data);
+      const existingKeys = new Set(
+        [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
+      );
+      const { kept, dupes } = dedupCompanies(data, existingKeys);
+      kept.forEach((r, i) => { r.id = 300000 + store.importedCompanies.length + i + 1; });
+      store.importedCompanies.push(...kept);
       saveStore();
       updateOnboarding();
       renderSidebar();
-      alert(`サンプル ${data.length}社 を読み込みました`);
+      alert(`サンプル ${kept.length}社 を読み込みました${dupes>0?`（重複 ${dupes}件除外）`:''}`);
     } catch (e) { alert('読込失敗: ' + e.message); }
   });
 

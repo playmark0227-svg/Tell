@@ -24,6 +24,31 @@
   --shadow-md: 0 2px 8px rgba(28, 25, 23, 0.06);
 }
 
+[data-theme="dark"] {
+  --bg: #1c1917;
+  --panel: #292524;
+  --panel-elev: #1f1d1c;
+  --border: #44403c;
+  --border-soft: #292524;
+  --text: #f5f5f4;
+  --muted: #a8a29e;
+  --warn-bg: #3f2e0c;
+  --warn-border: #fbbf24;
+  --good: #4ade80;
+  --mid: #fbbf24;
+  --low: #78716c;
+  --danger: #fca5a5;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+}
+[data-theme="dark"] tr.saved-row { background: #3a2f12; }
+[data-theme="dark"] .row-actions button.active { background: #3a2f12; color: #fde68a; border-color: #78350f; }
+[data-theme="dark"] .row-actions button.dnc-on { background: #3f1818; color: #fca5a5; border-color: #7f1d1d; }
+[data-theme="dark"] .ai-comment { background: #1f2937; border-left-color: #60a5fa; }
+[data-theme="dark"] .strategy-card { background: #1f1d1c; border-left-color: #60a5fa; }
+[data-theme="dark"] .icp-card { background: #1f1d1c; }
+[data-theme="dark"] .modal { background: rgba(0,0,0,0.75); }
+
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; }
@@ -511,6 +536,58 @@ button.ghost { background: transparent; color: var(--text); border: 1px solid va
 .samples-toggle .samples {
   margin-top: 8px;
 }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--muted);
+  gap: 4px;
+}
+.form-grid label.full { grid-column: 1 / -1; }
+.form-grid input, .form-grid select, .form-grid textarea {
+  width: 100%;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-elev);
+  color: var(--text);
+}
+
+.followup-item, .profile-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sidebar-border);
+  gap: 8px;
+  font-size: 12px;
+}
+.followup-item:last-child, .profile-item:last-child { border: 0; }
+.followup-when {
+  font-size: 11px;
+  color: var(--sidebar-muted);
+  margin-top: 2px;
+}
+.followup-when.overdue { color: #fca5a5; font-weight: 600; }
+.profile-actions { display: flex; gap: 4px; }
+.profile-actions button {
+  background: transparent;
+  border: 0;
+  color: var(--sidebar-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  margin: 0;
+}
+.profile-actions button:hover { color: var(--sidebar-fg); opacity: 1; }
+.profile-item.active { color: #60a5fa; font-weight: 600; }
 
 .ai-comment {
   font-size: 12px;
