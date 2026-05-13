@@ -816,14 +816,33 @@ function renderICP(icp) {
 function renderFilters() {
   const industrySel = document.getElementById('filter-industry');
   const prefSel = document.getElementById('filter-prefecture');
-  if (industrySel.options.length > 1) return;
-  const industries = [...new Set(state.companies.map(c => c.industry))].sort();
-  const prefectures = [...new Set(state.companies.map(c => c.prefecture))].sort();
-  industrySel.insertAdjacentHTML('beforeend',
-    industries.map(i => `<option value="${i}">${i}</option>`).join(''));
-  prefSel.insertAdjacentHTML('beforeend',
-    prefectures.map(p => `<option value="${p}">${p}</option>`).join(''));
+  const cityList = document.getElementById('city-options');
+  const all = [...state.companies, ...store.customCompanies];
+  if (industrySel.options.length <= 1) {
+    const industries = [...new Set(all.map(c => c.industry))].sort();
+    industrySel.insertAdjacentHTML('beforeend',
+      industries.map(i => `<option value="${i}">${i}</option>`).join(''));
+    const prefectures = [...new Set(all.map(c => c.prefecture).filter(Boolean))].sort();
+    prefSel.insertAdjacentHTML('beforeend',
+      prefectures.map(p => `<option value="${p}">${p}</option>`).join(''));
+  }
+  // 市区町村は都道府県に応じて更新
+  refreshCityDatalist();
   document.getElementById('filter-section').hidden = false;
+}
+
+function refreshCityDatalist() {
+  const cityList = document.getElementById('city-options');
+  if (!cityList) return;
+  const pref = document.getElementById('filter-prefecture').value;
+  const all = [...state.companies, ...store.customCompanies];
+  const cities = [...new Set(
+    all
+      .filter(c => !pref || c.prefecture === pref)
+      .map(c => c.city)
+      .filter(Boolean)
+  )].sort();
+  cityList.innerHTML = cities.map(c => `<option value="${c}">`).join('');
 }
 
 function applyFilters() {
@@ -868,7 +887,7 @@ function renderRow(c) {
       </td>
       <td data-label="会社名">${c.name}</td>
       <td data-label="業種">${c.industry}</td>
-      <td data-label="所在地">${c.prefecture}</td>
+      <td data-label="所在地">${c.prefecture}${c.city ? ' ' + c.city : ''}</td>
       <td data-label="規模">${c.employees}名</td>
       <td data-label="電話" class="phone"><a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a></td>
       <td data-label="状況">
@@ -1098,6 +1117,7 @@ function renderSidebar() {
 function applyFilters() {
   const industry = document.getElementById('filter-industry').value;
   const prefecture = document.getElementById('filter-prefecture').value;
+  const city = document.getElementById('filter-city').value.trim();
   const size = document.getElementById('filter-size').value;
   const minScore = parseInt(document.getElementById('filter-score').value, 10);
   const search = document.getElementById('search-box').value.trim().toLowerCase();
@@ -1105,6 +1125,7 @@ function applyFilters() {
   return state.scored
     .filter(c => !industry || c.industry === industry)
     .filter(c => !prefecture || c.prefecture === prefecture)
+    .filter(c => !city || (c.city || '').includes(city))
     .filter(c => !size || c.size === size)
     .filter(c => c.score >= minScore)
     .filter(c => !store.opts.excludeDnc || !store.dnc.has(c.id))
@@ -1244,7 +1265,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260512g');
+    const res = await fetch('data/companies.json?v=20260512h');
     state.companies = await res.json();
   } catch (e) {
     console.error('データ読み込み失敗:', e);
@@ -1273,8 +1294,15 @@ async function init() {
   });
 
   ['filter-industry', 'filter-prefecture', 'filter-size'].forEach(id => {
-    document.getElementById(id).addEventListener('change', renderResults);
+    document.getElementById(id).addEventListener('change', () => {
+      if (id === 'filter-prefecture') {
+        document.getElementById('filter-city').value = '';
+        refreshCityDatalist();
+      }
+      renderResults();
+    });
   });
+  document.getElementById('filter-city').addEventListener('input', renderResults);
   const scoreSlider = document.getElementById('filter-score');
   scoreSlider.addEventListener('input', e => {
     document.getElementById('filter-score-value').textContent = e.target.value;
@@ -1306,19 +1334,21 @@ async function init() {
     const name = document.getElementById('cc-name').value.trim();
     if (!name) { alert('会社名を入力してください'); return; }
     const phone = document.getElementById('cc-phone').value.trim() || '(未登録)';
+    const prefecture = document.getElementById('cc-prefecture').value.trim() || '-';
+    const city = document.getElementById('cc-city').value.trim() || '';
     const industry = document.getElementById('cc-industry').value || 'サービス業';
     const size = document.getElementById('cc-size').value || 'small';
     const description = document.getElementById('cc-desc').value.trim() || '';
     const employees = { small: 30, mid: 150, large: 500 }[size];
     const company = {
       id: 100000 + store.customCompanies.length + 1,
-      name, phone, industry, prefecture: '-', size, employees, description,
+      name, phone, industry, prefecture, city, size, employees, description,
       keywords: description.split(/[\s、,。]+/).filter(w => w.length >= 2),
       custom: true,
     };
     store.customCompanies.push(company);
     saveStore();
-    ['cc-name','cc-phone','cc-desc'].forEach(id => document.getElementById(id).value = '');
+    ['cc-name','cc-phone','cc-prefecture','cc-city','cc-desc'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('cc-industry').value = '';
     document.getElementById('cc-size').value = '';
     renderSidebar();

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング（デモ）</title>
-<link rel="stylesheet" href="style.css?v=20260512g">
+<link rel="stylesheet" href="style.css?v=20260512h">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -63,6 +63,8 @@
     <div class="side-body">
       <input type="text" id="cc-name" placeholder="会社名（必須）">
       <input type="text" id="cc-phone" placeholder="電話番号">
+      <input type="text" id="cc-prefecture" placeholder="都道府県（例:北海道）">
+      <input type="text" id="cc-city" placeholder="市区町村（例:苫小牧市）">
       <select id="cc-industry">
         <option value="">業種選択</option>
         <option>製造業</option>
@@ -194,6 +196,10 @@
       <label>都道府県
         <select id="filter-prefecture"><option value="">すべて</option></select>
       </label>
+      <label>市区町村
+        <input type="text" id="filter-city" list="city-options" placeholder="例: 苫小牧市">
+        <datalist id="city-options"></datalist>
+      </label>
       <label>従業員規模
         <select id="filter-size">
           <option value="">すべて</option>
@@ -265,6 +271,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260512g"></script>
+<script src="app.js?v=20260512h"></script>
 </body>
 </html>
