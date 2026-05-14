@@ -1576,8 +1576,41 @@ function importJson(file) {
 
 /* ============ Claude API (BYOK) ============ */
 async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
-  if (!store.opts.aiKey) throw new Error('APIキーが未設定です');
   const msgs = messages || [{ role: 'user', content: prompt }];
+  const body = {
+    model: store.opts.aiModel || 'claude-haiku-4-5-20251001',
+    max_tokens,
+    system,
+    messages: msgs,
+  };
+
+  // Worker proxy 経由(推奨) - WorkerにANTHROPIC_API_KEYまたはAI bindingがあれば動作
+  if (store.opts.braveProxy) {
+    const url = `${store.opts.braveProxy.replace(/\/+$/, '')}/llm/chat`;
+    try {
+      const wres = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (wres.ok) {
+        const data = await wres.json();
+        return data.content?.[0]?.text || '';
+      }
+      // Workerが失敗 → ブラウザ直接キーがあればフォールバック
+      const errText = await wres.text();
+      if (!store.opts.aiKey) {
+        throw new Error(`Worker LLM ${wres.status}: ${errText.slice(0,150)}`);
+      }
+    } catch (e) {
+      if (!store.opts.aiKey) throw e;
+    }
+  }
+
+  // ブラウザ直接(BYOK)
+  if (!store.opts.aiKey) {
+    throw new Error('LLM未設定。WorkerにANTHROPIC_API_KEYを追加するか、サイドバー「🤖 AI設定」でAPIキーを入力してください');
+  }
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -1586,12 +1619,7 @@ async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
       'anthropic-dangerous-direct-browser-access': 'true',
       'content-type': 'application/json',
     },
-    body: JSON.stringify({
-      model: store.opts.aiModel || 'claude-haiku-4-5-20251001',
-      max_tokens,
-      system,
-      messages: msgs,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const t = await res.text();
@@ -2166,8 +2194,8 @@ function escapeHtml(s) {
 }
 
 async function startChatMode() {
-  if (!store.opts.aiKey) {
-    alert('対話モードにはAnthropic APIキーが必要です。サイドバー「🤖 AI設定」から登録してください。');
+  if (!store.opts.braveProxy && !store.opts.aiKey) {
+    alert('対話モードにはLLMが必要です。\n\n方法A(推奨): WorkerのSecretsに ANTHROPIC_API_KEY を追加（Anthropicで$5から購入）\n方法B(無料): Worker Settings → AI Bindings で "AI" を追加（Cloudflare Workers AI使用）\n方法C: サイドバー🤖 AI設定で直接APIキー入力（共有端末ではNG）');
     return;
   }
   chatHistory = [];
@@ -2428,7 +2456,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513l');
+    const res = await fetch('data/companies.json?v=20260513m');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2718,7 +2746,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513l');
+      const res = await fetch('data/sample.json?v=20260513m');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
