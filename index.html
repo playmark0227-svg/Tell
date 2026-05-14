@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513d">
+<link rel="stylesheet" href="style.css?v=20260513e">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -314,10 +314,20 @@
         </select>
       </label>
       <label>最低スコア
-        <input type="range" id="filter-score" min="0" max="100" value="40">
-        <span id="filter-score-value">40</span>
+        <input type="range" id="filter-score" min="0" max="100" value="0">
+        <span id="filter-score-value">0</span>
       </label>
     </div>
+  </section>
+
+  <section class="panel" id="discover-more-section" hidden>
+    <h2>🌐 ウェブから企業を追加で発見</h2>
+    <p class="muted" style="margin-top:-4px;">いま表示されていない別の企業をBrave Searchで探します。クリックするたびに5〜10社追加されます。</p>
+    <div class="action-row">
+      <button id="discover-more-btn">5社追加で発見</button>
+      <button id="discover-more-many-btn" class="ghost">10社追加で発見</button>
+    </div>
+    <div id="discover-more-progress" class="discovery-progress" hidden></div>
   </section>
 
   <section class="panel" id="results-section" hidden>
@@ -413,6 +423,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513d"></script>
+<script src="app.js?v=20260513e"></script>
 </body>
 </html>

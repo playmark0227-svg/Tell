@@ -1658,17 +1658,28 @@ async function braveSearch(query, count = 10) {
   return (data.web?.results || []);
 }
 
-function generateQueriesFromICP(productText, icp) {
+function generateQueriesFromICP(productText, icp, round = 0) {
   const industries = icp?.industries || [];
   const queries = [];
   const seen = new Set();
+  // ラウンドごとにキーワードを変えて重複を回避
+  const KEYWORD_SETS = [
+    ['中小企業 会社概要', '株式会社 採用 募集', '代表電話'],
+    ['公式サイト', '社長メッセージ', '会社案内'],
+    ['新卒採用 募集', '中途採用 採用情報', 'キャリア採用'],
+    ['本社 アクセス', '事業内容 法人', '会社情報 設立'],
+    ['お問い合わせ 法人', 'IR情報', 'プレスリリース'],
+  ];
+  const kws = KEYWORD_SETS[round % KEYWORD_SETS.length];
   for (const ind of industries.slice(0, 4)) {
-    const q1 = `${ind} 中小企業 会社概要`;
-    const q2 = `${ind} 株式会社 採用 募集`;
-    if (!seen.has(q1)) { queries.push(q1); seen.add(q1); }
-    if (!seen.has(q2)) { queries.push(q2); seen.add(q2); }
+    for (const kw of kws) {
+      const q = `${ind} ${kw}`;
+      if (!seen.has(q)) { queries.push(q); seen.add(q); }
+      if (queries.length >= 6) break;
+    }
+    if (queries.length >= 6) break;
   }
-  if (queries.length < 3) {
+  if (queries.length === 0) {
     queries.push(`${productText.split(/[、。\s]/)[0]} 導入企業 会社`);
   }
   return queries.slice(0, 5);
@@ -1723,38 +1734,53 @@ function parseCompanyFromResult(r, idx) {
   };
 }
 
-async function discoverFromBrave(productText, icp, onProgress) {
+async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   if (!store.opts.braveKey && !store.opts.braveProxy) throw new Error('Brave のプロキシURLまたはAPIキーを設定してください');
-  const queries = await aiGenerateQueries(productText, icp);
-  onProgress?.(`検索クエリ ${queries.length}件を生成`);
+  const round = options.round || 0;
+  const maxQueries = options.maxQueries || 5;
+  let queries;
+  if (round === 0 && store.opts.aiEnabled && store.opts.aiKey) {
+    queries = await aiGenerateQueries(productText, icp);
+  } else {
+    queries = generateQueriesFromICP(productText, icp, round);
+  }
+  queries = queries.slice(0, maxQueries);
+  if (queries.length === 0) {
+    onProgress?.('クエリ生成失敗。ICPが空');
+    return [];
+  }
+  onProgress?.(`${queries.length}件のクエリを実行: ${queries.map(q=>`"${q.slice(0,20)}"`).join(', ')}`);
+
   const all = getAllCompanies();
   const existingKeys = new Set(all.map(dedupKey));
   const seenDomains = new Set();
   const found = [];
-  let qIdx = 0;
-  for (const q of queries) {
-    qIdx++;
-    onProgress?.(`検索 ${qIdx}/${queries.length}: "${q}"`);
+  const stats = { totalResults: 0, excluded: 0, duped: 0 };
+
+  for (let qIdx = 0; qIdx < queries.length; qIdx++) {
+    const q = queries[qIdx];
     try {
       const results = await braveSearch(q, 10);
-      let count = 0;
+      stats.totalResults += results.length;
+      let added = 0;
       results.forEach((r, i) => {
-        if (!r.url || isExcludedDomain(r.url)) return;
+        if (!r.url) { stats.excluded++; return; }
+        if (isExcludedDomain(r.url)) { stats.excluded++; return; }
         const dom = rootDomain(r.url);
-        if (seenDomains.has(dom)) return;
+        if (seenDomains.has(dom)) { stats.duped++; return; }
         seenDomains.add(dom);
         const c = parseCompanyFromResult(r, found.length);
-        if (!c) return;
+        if (!c) { stats.excluded++; return; }
         const key = dedupKey(c);
-        if (existingKeys.has(key)) return;
+        if (existingKeys.has(key)) { stats.duped++; return; }
         existingKeys.add(key);
         found.push(c);
-        count++;
+        added++;
       });
-      onProgress?.(`検索 ${qIdx}/${queries.length}: ${count}社発見`);
+      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ ${results.length}件中 +${added}社（累計${found.length}社）`);
     } catch (e) {
       console.warn('brave query failed:', q, e);
-      onProgress?.(`検索 ${qIdx}/${queries.length}: 失敗 (${e.message.slice(0,40)})`);
+      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ エラー: ${e.message.slice(0,50)}`);
     }
   }
   if (found.length > 0) {
@@ -1762,6 +1788,7 @@ async function discoverFromBrave(productText, icp, onProgress) {
     saveStore();
     updateOnboarding();
   }
+  onProgress?.(`✓ ${found.length}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}）`);
   return found;
 }
 
@@ -1883,6 +1910,7 @@ async function runPipeline(input, options = {}) {
     progEl.textContent = '⚠ ウェブ検索が未設定。サイドバー「🌐 ウェブ検索」でCloudflare WorkerプロキシURLを登録してください';
   }
 
+  state.discoveryRound = 0;
   const allCompanies = getAllCompanies();
   state.scored = allCompanies
     .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
@@ -1893,6 +1921,43 @@ async function runPipeline(input, options = {}) {
   renderFilters();
   renderResults();
   renderSidebar();
+  // 結果の下に「もっと探す」セクションを表示(Brave設定済みのときのみ)
+  const moreEl = document.getElementById('discover-more-section');
+  if (moreEl) {
+    moreEl.hidden = !(store.opts.braveKey || store.opts.braveProxy);
+  }
+}
+
+async function discoverMore(count) {
+  if (!state.icp) { alert('先に商材を分析してください'); return; }
+  state.discoveryRound = (state.discoveryRound || 0) + 1;
+  const input = document.getElementById('product-input').value.trim();
+  const progEl = document.getElementById('discover-more-progress');
+  progEl.hidden = false;
+  progEl.classList.remove('done', 'error');
+  progEl.textContent = `ラウンド${state.discoveryRound}: 検索中…`;
+  try {
+    const found = await discoverFromBrave(input, state.icp, msg => {
+      progEl.textContent = msg;
+    }, { round: state.discoveryRound, maxQueries: Math.ceil(count / 2) });
+    progEl.classList.add('done');
+    // 再スコアリング
+    const allCompanies = getAllCompanies();
+    state.scored = allCompanies
+      .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
+      .sort((a, b) => b.score - a.score);
+    renderFilters();
+    renderResults();
+    renderSidebar();
+    if (found.length === 0) {
+      progEl.classList.remove('done');
+      progEl.classList.add('error');
+      progEl.textContent += '（追加なし。「もっと探す」を再度押すと別のクエリで検索します）';
+    }
+  } catch (e) {
+    progEl.classList.add('error');
+    progEl.textContent = `失敗: ${e.message}`;
+  }
 }
 
 function setAIStatus(msg, level) {
@@ -1941,7 +2006,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513d');
+    const res = await fetch('data/companies.json?v=20260513e');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2050,6 +2115,9 @@ async function init() {
     if (!input) { alert('商材を入力してください'); return; }
     await runPipeline(input, { discover: false });
   });
+
+  document.getElementById('discover-more-btn').addEventListener('click', () => discoverMore(5));
+  document.getElementById('discover-more-many-btn').addEventListener('click', () => discoverMore(10));
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2181,7 +2249,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513d');
+      const res = await fetch('data/sample.json?v=20260513e');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
