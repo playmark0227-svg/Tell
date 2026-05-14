@@ -13,7 +13,10 @@ const state = {
   companies: [],
   classification: null,
   icp: null,
+  strategy: null,
+  intentSignals: [],
   scored: [],
+  discoveryRound: 0,
   view: 'all', // all | with_phone | without_phone | saved
 };
 
@@ -1010,19 +1013,6 @@ function refreshCityDatalist() {
       .filter(Boolean)
   )].sort();
   cityList.innerHTML = cities.map(c => `<option value="${c}">`).join('');
-}
-
-function applyFilters() {
-  const industry = document.getElementById('filter-industry').value;
-  const prefecture = document.getElementById('filter-prefecture').value;
-  const size = document.getElementById('filter-size').value;
-  const minScore = parseInt(document.getElementById('filter-score').value, 10);
-
-  return state.scored
-    .filter(c => !industry || c.industry === industry)
-    .filter(c => !prefecture || c.prefecture === prefecture)
-    .filter(c => !size || c.size === size)
-    .filter(c => c.score >= minScore);
 }
 
 function renderResults() {
@@ -2043,21 +2033,6 @@ function extractFromHTML(html, baseUrl) {
   return out;
 }
 
-async function enrichCompany(c, onProgress) {
-  if (!c.website || !store.opts.braveProxy) return c;
-  const html = await fetchPageViaProxy(c.website);
-  if (!html) return c;
-  const extracted = extractFromHTML(html, c.website);
-  if (!extracted) return c;
-  return {
-    ...c,
-    name: extracted.name || c.name,
-    phone: extracted.phone || c.phone,
-    contact_url: extracted.contact_url || c.contact_url,
-    prefecture: extracted.prefecture || c.prefecture,
-    needs_enrichment: false,
-  };
-}
 
 async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   if (!store.opts.braveKey && !store.opts.braveProxy) throw new Error('Brave のプロキシURLまたはAPIキーを設定してください');
@@ -2908,9 +2883,6 @@ async function init() {
   migrateCleanCompanies();
   updateOnboarding();
 
-  const countEl = document.getElementById('category-count');
-  if (countEl) countEl.textContent = PRODUCT_CATEGORIES.length;
-
   document.getElementById('opt-exclude-dnc').checked = store.opts.excludeDnc;
   document.getElementById('opt-saved-only').checked = store.opts.savedOnly;
   document.getElementById('opt-dark').checked = !!store.opts.dark;
@@ -3222,6 +3194,7 @@ async function init() {
       if (action === 'download-template') downloadFile('tell-partner-template.csv', CSV_TEMPLATE);
       if (action === 'load-sample') document.getElementById('load-sample').click();
       if (action === 'open-sidebar') document.getElementById('sidebar-toggle').click();
+      if (action === 'focus-product') document.getElementById('product-input').focus();
     });
   });
 
