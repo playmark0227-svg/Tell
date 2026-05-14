@@ -821,6 +821,15 @@ const WEIGHTS = {
 };
 
 function scoreCompany(company, icp, strategy, intentSignals) {
+  // AI評価がある場合はそれを優先(HP内容を実際に読んだ結果)
+  if (typeof company.ai_score === 'number') {
+    return {
+      ...company,
+      score: company.ai_score,
+      reasoning: company.ai_reasoning || '',
+      aiComment: `AI評価(HP内容ベース): ${company.ai_reasoning || ''}`,
+    };
+  }
   let score = 0;
   const reasons = [];
   const signals = extractCompanySignals(company);
@@ -1315,9 +1324,13 @@ function renderSidebar() {
   const savedCompanies = [...store.saved].map(id => state.companies.find(c => c.id === id)).filter(Boolean);
   const dncCompanies = [...store.dnc].map(id => state.companies.find(c => c.id === id)).filter(Boolean);
 
-  document.getElementById('badge-saved').textContent = savedCompanies.length;
-  document.getElementById('badge-dnc').textContent = dncCompanies.length;
-  document.getElementById('badge-history').textContent = store.history.length;
+  const setText = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+  setText('badge-saved', savedCompanies.length);
+  setText('badge-dnc', dncCompanies.length);
+  setText('badge-history', store.history.length);
   const badgeCustom = document.getElementById('badge-custom');
   if (badgeCustom) badgeCustom.textContent = store.customCompanies.length;
 
@@ -1363,26 +1376,26 @@ function renderSidebar() {
   const meetings = Object.values(store.status).filter(s => s === 'meeting').length;
   const connected = Object.values(store.status).filter(s => s === 'connected' || s === 'meeting').length;
   const total = Object.keys(store.status).length;
-  document.getElementById('stat-today').textContent = todayCalls;
-  document.getElementById('stat-saved').textContent = savedCompanies.length;
-  document.getElementById('stat-dnc').textContent = dncCompanies.length;
-  document.getElementById('stat-meeting').textContent = meetings;
-  document.getElementById('ana-total').textContent = total;
-  document.getElementById('ana-connected').textContent = connected;
-  document.getElementById('ana-rate').textContent = total > 0 ? `${Math.round(meetings/total*100)}%` : '0%';
+  setText('stat-today', todayCalls);
+  setText('stat-saved', savedCompanies.length);
+  setText('stat-dnc', dncCompanies.length);
+  setText('stat-meeting', meetings);
+  setText('ana-total', total);
+  setText('ana-connected', connected);
+  setText('ana-rate', total > 0 ? `${Math.round(meetings/total*100)}%` : '0%');
 
   const calledIds = Object.keys(store.status).map(Number);
   const calledScored = calledIds.map(id => state.scored.find(c => c.id === id)).filter(Boolean);
   const avg = calledScored.length > 0
     ? Math.round(calledScored.reduce((s,c) => s+c.score, 0) / calledScored.length)
     : null;
-  document.getElementById('ana-avg-score').textContent = avg !== null ? avg : '-';
+  setText('ana-avg-score', avg !== null ? avg : '-');
 
   // フォローアップ表示
   const all = getAllCompanies();
   const fuEl = document.getElementById('followup-list');
   const upcoming = store.followUps.filter(f => all.find(c => c.id === f.id)).slice(0, 10);
-  document.getElementById('badge-followup').textContent = upcoming.length;
+  setText('badge-followup', upcoming.length);
   if (fuEl) {
     fuEl.innerHTML = upcoming.length === 0
       ? '<div class="empty">予定なし</div>'
@@ -1408,7 +1421,7 @@ function renderSidebar() {
 
   // プロファイル表示
   const profEl = document.getElementById('prof-list');
-  document.getElementById('badge-profile').textContent = store.profiles.length;
+  setText('badge-profile', store.profiles.length);
   if (profEl) {
     profEl.innerHTML = store.profiles.length === 0
       ? '<div class="empty">未保存</div>'
@@ -2070,7 +2083,7 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       const c = queryCandidates[i];
       onProgress?.(`${qIdx+1}/${queries.length} | HP訪問 ${i+1}/${queryCandidates.length}: ${c.name.slice(0,30)} …`);
       try {
-        const enriched = await enrichCompanyDeep(c);
+        const enriched = await enrichCompanyDeep(c, productText);
         Object.assign(c, enriched);
       } catch (e) {
         console.warn('enrich failed', c.website, e);
@@ -2097,7 +2110,20 @@ function queryCandidates_count(stats, _foundLen, validated) {
   return Math.max(0, stats.totalResults - stats.excluded - stats.duped - validated);
 }
 
-async function enrichCompanyDeep(c) {
+function htmlToText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function enrichCompanyDeep(c, productText) {
   if (!c.website || !store.opts.braveProxy) return c;
   const baseUrl = c.website.replace(/\/+$/, '');
   const urls = [];
@@ -2117,9 +2143,11 @@ async function enrichCompanyDeep(c) {
     `${baseUrl}/company/outline`,
   );
   let best = { ...c };
+  const collectedTexts = [];
   for (const u of urls) {
     const html = await fetchPageViaProxy(u);
     if (!html) continue;
+    collectedTexts.push(htmlToText(html).slice(0, 2000));
     const ext = extractFromHTML(html, u);
     if (!ext) continue;
     if (ext.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人)/.test(ext.name)) {
@@ -2132,11 +2160,21 @@ async function enrichCompanyDeep(c) {
     if (ext.phone && !best.phone) best.phone = ext.phone;
     if (ext.contact_url && !best.contact_url) best.contact_url = ext.contact_url;
     if (ext.prefecture && !best.prefecture) best.prefecture = ext.prefecture;
-    // 名前+電話+住所が揃ったら十分
     if (best.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(best.name)
         && best.phone && best.prefecture) break;
   }
   best.needs_enrichment = false;
+
+  // AI評価(時間かかるが精度高い)
+  if (productText && (store.opts.aiKey || store.opts.braveProxy) && collectedTexts.length > 0) {
+    const hpText = collectedTexts.join('\n').slice(0, 3500);
+    const ai = await aiScoreCompany(best, productText, hpText);
+    if (ai) {
+      best.ai_score = ai.score;
+      best.ai_reasoning = ai.reasoning;
+      best.ai_fit = ai.fit;
+    }
+  }
   return best;
 }
 
@@ -2186,6 +2224,42 @@ async function aiAnalyzeProduct(productText) {
 JSON以外は出力しないでください。`;
   const text = await callClaude({ system, prompt, max_tokens: 3000 });
   return extractJson(text);
+}
+
+async function aiScoreCompany(company, productText, hpText) {
+  if (!store.opts.aiKey && !store.opts.braveProxy) return null;
+  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と企業情報から、その企業がその商材を購入する適合度を厳しく評価してください。JSONのみで返答。`;
+  const prompt = `商材: ${productText}
+
+企業情報:
+- 会社名: ${company.name}
+- 業種: ${company.industry || '不明'}
+- 所在地: ${company.prefecture || ''} ${company.city || ''}
+- HP説明: ${(company.description || '').slice(0, 200)}
+- HPテキスト抜粋: ${(hpText || '').slice(0, 1500)}
+
+評価基準:
+1. この企業の事業内容と商材の関連性
+2. 想定される購入動機の強さ
+3. 既存ベンダー/競合導入の兆候
+4. 規模感の適合
+
+以下のJSONのみ返答:
+{"score": 0-100の整数, "reasoning": "30文字程度の根拠", "fit": "high|mid|low"}`;
+  try {
+    const text = await callClaude({ system: sys, prompt, max_tokens: 300 });
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const obj = JSON.parse(m[0]);
+    return {
+      score: Math.max(0, Math.min(100, parseInt(obj.score, 10) || 0)),
+      reasoning: obj.reasoning || '',
+      fit: obj.fit || 'mid',
+    };
+  } catch (e) {
+    console.warn('aiScoreCompany failed', company.name, e);
+    return null;
+  }
 }
 
 async function aiScript(company, productText, icp, strategy) {
