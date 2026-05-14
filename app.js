@@ -1633,14 +1633,30 @@ async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
 /* ============ Brave Search (browser direct) ============ */
 const BRAVE_EXCLUDED_DOMAINS = new Set([
   'asahi.com','nikkei.com','mainichi.jp','yomiuri.co.jp','sankei.com',
+  // 求人ポータル
   'rikunabi.com','mynavi.jp','indeed.com','doda.jp','type.jp',
+  'baitoru.com','townwork.net','wantedly.com','green-japan.com',
+  'an.shopowner-pro.jp','workport.co.jp','pasona.co.jp',
+  'job-medley.com','careercross.com','en-japan.com','enbiz.en-japan.com',
+  'rikuami.com','tenshoku.mynavi.jp','agent.mynavi.jp',
+  'kosaten.jp','jp-talent.com','baitos.jp','baitoex-mag.com',
+  'pasonacareer.jp','careercarver.jp','findjob.jp','jobsearch.mhlw.go.jp',
+  'engage.cloud','careerpark.jp','kojincojin.jp','tenshoku-antenna.com',
+  '8mato.jp','x-recruit.jp','hellowork.mhlw.go.jp','salaryman.work',
+  'kosaten.com','jobquicker.com','recruit-agent.com','levtech-rookie.jp',
+  // ECモール・口コミ
   'rakuten.co.jp','amazon.co.jp','yahoo.co.jp','google.com','google.co.jp',
-  'tabelog.com','hotpepper.jp','gnavi.co.jp','retty.me',
+  'tabelog.com','hotpepper.jp','gnavi.co.jp','retty.me','kakaku.com',
+  // 情報サイト
   'wikipedia.org','wikiwand.com','note.com','qiita.com','zenn.dev',
+  // SNS
   'facebook.com','twitter.com','x.com','instagram.com','linkedin.com',
-  'youtube.com','tiktok.com',
-  'prtimes.jp','atpress.ne.jp','jp.linkedin.com',
+  'youtube.com','tiktok.com','jp.linkedin.com',
+  // プレスリリース
+  'prtimes.jp','atpress.ne.jp','dreamnews.jp','valuepress.com',
+  // 業者DB
   'houjin-bangou.nta.go.jp','search.brave.com',
+  'baseconnect.in','musubu.in','bizmaps.jp','onecareer.jp',
 ]);
 
 function rootDomain(url) {
@@ -1682,21 +1698,52 @@ const NOISE_URL_PATTERNS = [
   /\/magazine\//, /\/research\//, /\/whitepaper\//,
 ];
 
+const STRONG_ARTICLE_PATTERNS = [
+  /とは[？\?！\!　\s]*$/,
+  /徹底比較/, /徹底解説/, /完全ガイド/, /完全網羅/,
+  /おすすめ.{0,5}\d+選/, /厳選.{0,5}\d+選/,
+  /ランキング/, /の選び方/, /の方法/,
+  /解説[!！]/, /\d+選[！!]?$/,
+  /メリット.{0,3}デメリット/, /違いを/,
+];
+
 function looksLikeArticle(title, url, desc) {
   const text = `${title || ''} ${desc || ''}`;
   if (url && NOISE_URL_PATTERNS.some(re => re.test(url))) return true;
+  // 強い単一パターン
+  if (STRONG_ARTICLE_PATTERNS.some(re => re.test(title || ''))) return true;
+  // 複数キーワード
   let count = 0;
   for (const kw of ARTICLE_KEYWORDS) {
     if (text.includes(kw)) count++;
     if (count >= 2) return true;
   }
-  // タイトルに法人格がなく、説明文にだけ会社名があるなら記事の可能性
-  if (/(おすすめ.{0,8}\d+|徹底.{0,5}比較|ランキング)/.test(title || '')) return true;
+  return false;
+}
+
+const GENERIC_NAMES = new Set([
+  '製造業', '建設業', '卸売・小売業', '飲食業', '運輸業',
+  '情報通信業', '金融・保険業', '不動産業', '医療・福祉',
+  '教育・学習支援', '宿泊・サービス業', 'サービス業', '農林水産業',
+  '会社案内', '事業内容', '採用情報', '会社概要',
+  'お問い合わせ', '企業情報', '法人案内', 'ホーム', 'TOP',
+]);
+
+function isGenericName(name) {
+  if (!name) return true;
+  const n = name.trim();
+  if (n.length < 3) return true;
+  if (GENERIC_NAMES.has(n)) return true;
+  // 末尾が「求人/仕事/採用/転職/募集」のみ → ポータル経由のページ
+  if (/(求人|仕事|採用|転職|募集)$/.test(n) && !/(株式会社|合同会社|有限会社)/.test(n)) return true;
+  // 「○○ナビ」「○○サイト」「○○ガイド」など
+  if (/(ナビ|サイト|ガイド|ポータル|サーチ|まとめ|一覧)$/.test(n) && n.length < 15) return true;
   return false;
 }
 
 function isLikelyRealCompany(c) {
   if (looksLikeArticle(c.name, c.source_url || c.website, c.description)) return false;
+  if (isGenericName(c.name)) return false;
   const corpRe = /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人|宗教法人|協同組合|Inc\.?|Corp\.?|LLC|Co\.,?\s?Ltd|Group|Company)/i;
   return corpRe.test(c.name || '');
 }
@@ -1841,7 +1888,9 @@ function parseCompanyFromResult(r, idx) {
 
 function extractCompanyName(title, url) {
   if (!title) return rootDomain(url).replace(/^www\./, '').split('.')[0];
-  const cleaned = title.replace(/&amp;/g, '&').trim();
+  let cleaned = title.replace(/&amp;/g, '&').trim();
+  // 求人/採用/転職ポータル経由のタイトルから会社名だけ抜き出す
+  cleaned = cleaned.replace(/(の求人.*|の採用情報.*|の採用.*|の仕事.*|の転職.*|の中途.*|\s*[\|｜]\s*求人.*|\s*[\|｜]\s*採用.*|\s*[\|｜]\s*転職.*|\s*[\|｜]\s*マイナビ.*|\s*[\|｜]\s*リクナビ.*|\s*[\|｜]\s*Indeed.*|\s*[\|｜]\s*エン転職.*|\s*[\|｜]\s*doda.*|\s*[\|｜]\s*type.*)$/i, '').trim();
   // 法人格パターン優先
   const patterns = [
     /(株式会社[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
@@ -2484,7 +2533,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513o');
+    const res = await fetch('data/companies.json?v=20260513p');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2774,7 +2823,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513o');
+      const res = await fetch('data/sample.json?v=20260513p');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
