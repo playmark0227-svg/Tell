@@ -1,5 +1,14 @@
 'use strict';
 
+window.addEventListener('error', e => {
+  console.error('Global error:', e.error || e.message);
+  if (e.error?.stack) console.error(e.error.stack);
+});
+window.addEventListener('unhandledrejection', e => {
+  console.error('Unhandled promise rejection:', e.reason);
+  if (e.reason?.stack) console.error(e.reason.stack);
+});
+
 const state = {
   companies: [],
   classification: null,
@@ -1010,9 +1019,12 @@ function applyFilters() {
 function renderResults() {
   const filtered = applyFilters();
   const tbody = document.querySelector('#results-table tbody');
+  if (!tbody) return;
   tbody.innerHTML = filtered.map(c => renderRow(c)).join('');
-  document.getElementById('result-count').textContent = `（${filtered.length}件）`;
-  document.getElementById('results-section').hidden = false;
+  const countEl = document.getElementById('result-count');
+  if (countEl) countEl.textContent = `（${filtered.length}件）`;
+  const section = document.getElementById('results-section');
+  if (section) section.hidden = false;
   bindRowActions();
 }
 
@@ -2015,12 +2027,16 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   const stats = { totalResults: 0, excluded: 0, duped: 0 };
 
   const rescore = () => {
-    const allCompanies = getAllCompanies();
-    state.scored = allCompanies
-      .map(co => scoreCompany(co, state.icp, state.strategy, state.intentSignals))
-      .sort((a, b) => b.score - a.score);
-    renderResults();
-    renderSidebar();
+    try {
+      const allCompanies = getAllCompanies();
+      state.scored = allCompanies
+        .map(co => scoreCompany(co, state.icp || { industries:[], sizes:[], pains:[], keywords:[], anti_patterns:[] }, state.strategy || {}, state.intentSignals || []))
+        .sort((a, b) => b.score - a.score);
+      renderResults();
+      renderSidebar();
+    } catch (err) {
+      console.error('rescore error:', err);
+    }
   };
 
   let totalValidated = 0;
@@ -2341,14 +2357,25 @@ async function runPipeline(input, options = {}) {
     setAIStatus('AI分析中…', 'mid');
     try {
       const result = await aiAnalyzeProduct(input);
+      // AI応答が不完全でも動くようルールベースを土台にしてマージ
+      const ruleClassif = classifyProduct(input);
+      const ruleIcp = ruleClassif.category.icp;
+      const ruleStrategy = inferStrategy(ruleClassif.category, ruleIcp);
+      const mergedIcp = {
+        industries: (result.icp?.industries?.length ? result.icp.industries : ruleIcp.industries),
+        sizes: (result.icp?.sizes?.length ? result.icp.sizes : ruleIcp.sizes),
+        pains: (result.icp?.pains?.length ? result.icp.pains : ruleIcp.pains),
+        keywords: (result.icp?.keywords?.length ? result.icp.keywords : ruleIcp.keywords),
+        anti_patterns: [],
+      };
       state.classification = {
-        category: { id: 'ai', name: result.category_name, icp: result.icp },
+        category: { id: 'ai', name: result.category_name || ruleClassif.category.name, icp: mergedIcp },
         confidence: result.confidence || 'high',
         alternatives: [],
       };
-      state.icp = { ...result.icp, anti_patterns: [] };
-      state.strategy = result.strategy;
-      state.intentSignals = result.strategy.target_signals || [];
+      state.icp = mergedIcp;
+      state.strategy = { ...ruleStrategy, ...(result.strategy || {}) };
+      state.intentSignals = (result.strategy && result.strategy.target_signals) || [];
       setAIStatus('AI分析完了 ✓', 'good');
     } catch (e) {
       console.error('AI分析失敗', e);
@@ -2387,8 +2414,9 @@ async function runPipeline(input, options = {}) {
       progEl.classList.add('done');
       progEl.textContent = `✓ ${found.length}社の新規企業を発見しました${found.length === 0 ? '（既存と重複した可能性あり）' : ''}`;
     } catch (e) {
+      console.error('discover error:', e);
       progEl.classList.add('error');
-      progEl.textContent = `発見失敗: ${e.message}`;
+      progEl.textContent = `発見失敗: ${e.message} ${e.stack ? '(詳細はブラウザコンソール参照)' : ''}`;
     }
   } else if (discover && !store.opts.braveKey && !store.opts.braveProxy) {
     progEl.hidden = false;
@@ -2533,7 +2561,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513p');
+    const res = await fetch('data/companies.json?v=20260513q');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2823,7 +2851,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513p');
+      const res = await fetch('data/sample.json?v=20260513q');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
