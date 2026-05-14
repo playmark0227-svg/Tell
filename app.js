@@ -2306,7 +2306,7 @@ async function applyFilterFromText() {
   }
   statusEl.textContent = 'AI解析中…';
   statusEl.style.color = 'var(--mid)';
-  const sys = 'あなたは営業要件のパース専門家です。自然文から絞り込み条件を抽出してJSONで返答してください。';
+  const sys = 'あなたは営業要件のパース専門家です。自然文から絞り込み条件を抽出してJSONで返答してください。配列は使わず、複数候補がある場合は最も主要なものを1つ選んでください。';
   const prompt = `以下の文章から、企業検索の絞り込み条件を抽出してください。
 
 文章:
@@ -2314,20 +2314,23 @@ async function applyFilterFromText() {
 ${text}
 """
 
-抽出項目:
-- industry: 日本標準産業分類の大分類名(製造業/建設業/卸売・小売業/飲食業/運輸業/情報通信業/金融・保険業/不動産業/医療・福祉/教育・学習支援/宿泊・サービス業/サービス業/農林水産業)から該当を1つ、または null
-- prefecture: 都道府県名(○○県/○○府/北海道/東京都) または null
-- city: 市区町村名 または null
+抽出項目(複数候補があっても1つだけ選んで返す):
+- industry: 日本標準産業分類の大分類名(製造業/建設業/卸売・小売業/飲食業/運輸業/情報通信業/金融・保険業/不動産業/医療・福祉/教育・学習支援/宿泊・サービス業/サービス業/農林水産業)から1つ、または null
+- prefecture: 都道府県名(○○県/○○府/北海道/東京都)を1つ、または null
+- city: 市区町村名を1つ、または null
 - size: "small"(〜50名) | "mid"(51-300) | "large"(301+) | null
-- product_addendum: 商材に追加すべき情報があれば文字列(なければ空)
+- product_addendum: 商材に追加すべき情報(地域・複数指定があれば文字列でまとめる)
 
-JSONのみ返答:
-{"industry":null,"prefecture":"北海道","city":"苫小牧市","size":"mid","product_addendum":""}`;
+JSON object のみ返答(配列禁止、コメント禁止):
+{"industry":null,"prefecture":"北海道","city":"苫小牧市","size":"mid","product_addendum":"札幌・岩見沢・徳島・新潟も対象"}`;
   try {
-    const result = await callClaude({ system: sys, prompt, max_tokens: 400 });
-    const m = result.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('JSONパース失敗');
-    const f = JSON.parse(m[0]);
+    const result = await callClaude({ system: sys, prompt, max_tokens: 600 });
+    // 最初の { から最後の } までを抽出して JSON.parse
+    const start = result.indexOf('{');
+    const end = result.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('JSON形式が見つかりません');
+    const jsonStr = result.slice(start, end + 1);
+    const f = JSON.parse(jsonStr);
     let applied = [];
     if (f.industry) {
       const sel = document.getElementById('filter-industry');
@@ -2351,8 +2354,8 @@ JSONのみ返答:
       const productEl = document.getElementById('product-input');
       const existing = productEl.value.trim();
       if (existing && !existing.includes(f.product_addendum)) {
-        productEl.value = existing + '。' + f.product_addendum;
-        applied.push('商材に追記');
+        productEl.value = existing + '。対象地域: ' + f.product_addendum;
+        applied.push('商材に地域情報追記');
       } else if (!existing) {
         productEl.value = f.product_addendum;
         applied.push('商材を設定');
@@ -2362,7 +2365,8 @@ JSONのみ返答:
     statusEl.style.color = applied.length > 0 ? 'var(--good)' : 'var(--mid)';
     if (state.scored.length > 0) renderResults();
   } catch (e) {
-    statusEl.textContent = `失敗: ${e.message.slice(0,80)}`;
+    console.error('applyFilterFromText error', e);
+    statusEl.textContent = `失敗: ${e.message.slice(0,120)}`;
     statusEl.style.color = 'var(--danger)';
   }
 }
