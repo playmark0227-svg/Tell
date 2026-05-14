@@ -1626,6 +1626,10 @@ async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
       // Workerが失敗 → ブラウザ直接キーがあればフォールバック
       const errText = await wres.text();
       if (!store.opts.aiKey) {
+        // クォータ超過の場合は分かりやすいメッセージ
+        if (/4006|neurons|daily free allocation/i.test(errText)) {
+          throw new Error('Workers AIの1日無料枠(10,000ニューロン)を使い切りました。日本時間9:00にリセットされます。継続利用するにはサイドバー🤖 AI設定でAnthropic APIキーを設定するか、CloudflareでWorkers Paidプラン($5/月)に加入してください');
+        }
         throw new Error(`Worker LLM ${wres.status}: ${errText.slice(0,150)}`);
       }
     } catch (e) {
