@@ -2264,11 +2264,21 @@ async function runPipeline(input, options = {}) {
   if (discover && (store.opts.braveKey || store.opts.braveProxy)) {
     progEl.hidden = false;
     progEl.classList.remove('done', 'error');
-    progEl.textContent = '商材を分析してターゲット企業を検索中…';
+    // 絞り込み条件を取得→クエリに反映
+    const preFilters = {
+      industry: document.getElementById('filter-industry').value,
+      prefecture: document.getElementById('filter-prefecture').value,
+      city: document.getElementById('filter-city').value.trim(),
+    };
+    const hasPreFilter = preFilters.industry || preFilters.prefecture || preFilters.city;
+    progEl.textContent = hasPreFilter
+      ? `絞り込み条件(${[preFilters.industry, preFilters.prefecture, preFilters.city].filter(Boolean).join('・')})で検索中…`
+      : '商材を分析してターゲット企業を検索中…';
+    const customQueries = hasPreFilter ? generateFilteredQueries(input, state.icp, preFilters, 0) : null;
     try {
       const found = await discoverFromBrave(input, state.icp, msg => {
         progEl.textContent = msg;
-      });
+      }, customQueries ? { queries: customQueries, maxQueries: 10 } : {});
       progEl.classList.add('done');
       progEl.textContent = `✓ ${found.length}社の新規企業を発見しました${found.length === 0 ? '（既存と重複した可能性あり）' : ''}`;
     } catch (e) {
@@ -2418,7 +2428,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513k');
+    const res = await fetch('data/companies.json?v=20260513l');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2708,7 +2718,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513k');
+      const res = await fetch('data/sample.json?v=20260513l');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)

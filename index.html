@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513k">
+<link rel="stylesheet" href="style.css?v=20260513l">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -277,33 +277,43 @@
     </details>
   </section>
 
-  <section class="panel" id="classification-section" hidden>
-    <h2>2. 商材判別</h2>
-    <div id="classification-display"></div>
-  </section>
-
-  <section class="panel" id="strategy-section" hidden>
-    <h2>3. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
-    <div id="strategy-display"></div>
-  </section>
-
-  <section class="panel" id="icp-section" hidden>
-    <h2>4. 理想顧客プロファイル（ICP）</h2>
-    <div id="icp-display"></div>
-  </section>
-
-  <section class="panel" id="filter-section" hidden>
-    <h2>5. 絞り込み</h2>
-    <div class="action-row" style="margin-bottom:12px;">
-      <button id="refine-search-btn">🔍 この絞り込みでウェブを精密検索</button>
-    </div>
+  <section class="panel" id="filter-section">
+    <h2>2. ターゲット絞り込み <span class="muted">— 検索時もこの条件が反映されます</span></h2>
     <div id="refine-progress" class="discovery-progress" hidden style="margin-bottom:12px;"></div>
+    <div class="action-row" style="margin-bottom:12px;">
+      <button id="refine-search-btn" class="ghost">🔍 この絞り込みでウェブを精密検索（追加発見）</button>
+    </div>
     <div class="filters">
       <label>業種
-        <select id="filter-industry"><option value="">すべて</option></select>
+        <select id="filter-industry">
+          <option value="">すべて</option>
+          <option>製造業</option>
+          <option>建設業</option>
+          <option>卸売・小売業</option>
+          <option>飲食業</option>
+          <option>運輸業</option>
+          <option>情報通信業</option>
+          <option>金融・保険業</option>
+          <option>不動産業</option>
+          <option>医療・福祉</option>
+          <option>教育・学習支援</option>
+          <option>宿泊・サービス業</option>
+          <option>サービス業</option>
+          <option>農林水産業</option>
+        </select>
       </label>
       <label>都道府県
-        <select id="filter-prefecture"><option value="">すべて</option></select>
+        <select id="filter-prefecture">
+          <option value="">すべて</option>
+          <option>北海道</option><option>青森県</option><option>岩手県</option><option>宮城県</option><option>秋田県</option><option>山形県</option><option>福島県</option>
+          <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
+          <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option><option>山梨県</option><option>長野県</option>
+          <option>岐阜県</option><option>静岡県</option><option>愛知県</option><option>三重県</option>
+          <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
+          <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
+          <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
+          <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option><option>沖縄県</option>
+        </select>
       </label>
       <label>市区町村
         <input type="text" id="filter-city" list="city-options" placeholder="例: 苫小牧市">
@@ -322,6 +332,21 @@
         <span id="filter-score-value">0</span>
       </label>
     </div>
+  </section>
+
+  <section class="panel" id="classification-section" hidden>
+    <h2>3. 商材判別</h2>
+    <div id="classification-display"></div>
+  </section>
+
+  <section class="panel" id="strategy-section" hidden>
+    <h2>4. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
+    <div id="strategy-display"></div>
+  </section>
+
+  <section class="panel" id="icp-section" hidden>
+    <h2>5. 理想顧客プロファイル（ICP）</h2>
+    <div id="icp-display"></div>
   </section>
 
   <section class="panel" id="discover-more-section" hidden>
@@ -443,6 +468,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513k"></script>
+<script src="app.js?v=20260513l"></script>
 </body>
 </html>
