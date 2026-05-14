@@ -2200,7 +2200,6 @@ async function startChatMode() {
   }
   chatHistory = [];
   document.getElementById('chat-log').innerHTML = '';
-  document.getElementById('chat-finalize').disabled = true;
   document.getElementById('chat-modal').hidden = false;
   document.getElementById('chat-input').focus();
   const opener = 'こんにちは!営業戦略を一緒に組み立てます。\n\nまず、どんな商材を売っていらっしゃいますか? 商品名・サービス名と概要をざっくり教えてください。';
@@ -2236,18 +2235,46 @@ async function sendChatMessage() {
   }
 }
 
-function finalizeChat() {
-  // 最後の assistant メッセージ(要約)を取得
-  const lastAssistant = [...chatHistory].reverse().find(m => m.role === 'assistant');
-  if (!lastAssistant) return;
-  // [FINALIZE] マーカーの直前までを抽出
-  let summary = lastAssistant.content.replace(/\[FINALIZE\]/g, '').trim();
-  // 「これまでの情報をまとめます」以降の段落を取り出す試み
-  const m = summary.match(/(?:まとめます[。:：]?\s*)([\s\S]+)$/);
-  if (m) summary = m[1].trim();
+async function finalizeChat() {
+  const btn = document.getElementById('chat-finalize');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '要約を生成中…';
+
+  // [FINALIZE]マーカー付きの要約があるかチェック
+  const finalMsg = [...chatHistory].reverse().find(m =>
+    m.role === 'assistant' && m.content.includes('[FINALIZE]')
+  );
+
+  let summary;
+  if (finalMsg) {
+    summary = finalMsg.content.replace(/\[FINALIZE\]/g, '').trim();
+    const m = summary.match(/(?:まとめます[。:：]?\s*)([\s\S]+)$/);
+    if (m) summary = m[1].trim();
+  } else {
+    // AIに即時要約を依頼
+    try {
+      const summaryReply = await callClaude({
+        system: 'あなたはB2B営業戦略の専門家です。これまでの会話から商材の特徴・ターゲット・価値訴求を1段落の説明文にまとめてください。',
+        messages: [
+          ...chatHistory,
+          { role: 'user', content: 'これまでの会話から、私が売っている商材の説明文を1段落(150〜300文字)で作成してください。商品名・ターゲット業種・規模・価値訴求・差別化点を盛り込んで。説明文のみで他のテキスト不要。' },
+        ],
+        max_tokens: 800,
+      });
+      summary = summaryReply.replace(/\[FINALIZE\]/g, '').trim();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = origText;
+      alert(`要約生成に失敗: ${e.message}`);
+      return;
+    }
+  }
+
   document.getElementById('product-input').value = summary;
   document.getElementById('chat-modal').hidden = true;
-  // 自動で分析を実行
+  btn.disabled = false;
+  btn.textContent = origText;
   setTimeout(() => {
     document.getElementById('analyze-btn').click();
   }, 200);
@@ -2456,7 +2483,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513m');
+    const res = await fetch('data/companies.json?v=20260513n');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2746,7 +2773,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513m');
+      const res = await fetch('data/sample.json?v=20260513n');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
