@@ -2075,46 +2075,45 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   let totalValidated = 0;
   for (let qIdx = 0; qIdx < queries.length; qIdx++) {
     const q = queries[qIdx];
-    let queryCandidates = [];
+    let rawResults = [];
     try {
-      const results = await braveSearch(q, 20);
-      stats.totalResults += results.length;
-      results.forEach((r, i) => {
-        if (!r.url) { stats.excluded++; return; }
-        if (isExcludedDomain(r.url)) { stats.excluded++; return; }
-        const dom = rootDomain(r.url);
-        if (seenDomains.has(dom)) { stats.duped++; return; }
-        seenDomains.add(dom);
-        const c = parseCompanyFromResult(r, found.length + queryCandidates.length);
-        if (!c) { stats.excluded++; return; }
-        const key = dedupKey(c);
-        if (existingKeys.has(key)) { stats.duped++; return; }
-        existingKeys.add(key);
-        queryCandidates.push(c);
-      });
-      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ ${results.length}件中 ${queryCandidates.length}社候補。HP訪問で精査中…`);
+      rawResults = await braveSearch(q, 20);
+      stats.totalResults += rawResults.length;
+      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ ${rawResults.length}件取得、1件ずつ精査`);
     } catch (e) {
       console.warn('brave query failed:', q, e);
       onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ 検索エラー: ${e.message.slice(0,50)}`);
       continue;
     }
-    // まず候補をリストに「評価中」として即追加(ユーザー視点で即座に表示)
-    queryCandidates.forEach(c => {
+    // 1件ずつ: 候補化→即リストに追加(pending)→ブラウザ描画→HP訪問→AI評価→確定 or 削除
+    for (let ri = 0; ri < rawResults.length; ri++) {
+      const r = rawResults[ri];
+      if (!r.url) { stats.excluded++; continue; }
+      if (isExcludedDomain(r.url)) { stats.excluded++; continue; }
+      const dom = rootDomain(r.url);
+      if (seenDomains.has(dom)) { stats.duped++; continue; }
+      seenDomains.add(dom);
+      const c = parseCompanyFromResult(r, found.length + ri);
+      if (!c) { stats.excluded++; continue; }
+      const key = dedupKey(c);
+      if (existingKeys.has(key)) { stats.duped++; continue; }
+      existingKeys.add(key);
+
+      // 即「評価中」状態でリストに追加
       c.pending = true;
       c.score = 50;
       c.reasoning = '🔍 HP訪問・AI評価中…';
       c.aiComment = '🔍 評価中…';
-    });
-    if (queryCandidates.length > 0) {
-      store.importedCompanies.push(...queryCandidates);
+      store.importedCompanies.push(c);
       saveStore();
       updateOnboarding();
       rescore();
-    }
-    // 各候補をHP訪問→AI評価→確定 or 削除
-    for (let i = 0; i < queryCandidates.length; i++) {
-      const c = queryCandidates[i];
-      onProgress?.(`${qIdx+1}/${queries.length} | HP訪問 ${i+1}/${queryCandidates.length}: ${c.name.slice(0,30)}…`);
+      onProgress?.(`${qIdx+1}/${queries.length} | ${ri+1}/${rawResults.length} 候補追加: ${c.name.slice(0,30)} → 評価中…`);
+
+      // ブラウザに描画させる時間を与える (実体感の演出も兼ねる)
+      await new Promise(res => setTimeout(res, 50));
+
+      // HP訪問→AI評価
       try {
         const enriched = await enrichCompanyDeep(c, productText);
         Object.assign(c, enriched);
@@ -2122,7 +2121,6 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         console.warn('enrich failed', c.website, e);
       }
       c.pending = false;
-      // AI判定優先: ai_is_company が明示的にfalseなら除外
       const aiSaysNotCompany = c.ai_is_company === false;
       const passesRule = !aiSaysNotCompany && isLikelyRealCompany(c);
       if (passesRule) {
@@ -2132,7 +2130,6 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         rescore();
         onProgress?.(`✓ ${c.name.slice(0,30)} 評価完了 (累計${totalValidated}社)`);
       } else {
-        // 評価失敗→リストから削除
         store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
         saveStore();
         rescore();
