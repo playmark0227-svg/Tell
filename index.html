@@ -280,6 +280,15 @@
   <section class="panel" id="filter-section">
     <h2>2. ターゲット絞り込み <span class="muted">— 検索時もこの条件が反映されます</span></h2>
     <div id="refine-progress" class="discovery-progress" hidden style="margin-bottom:12px;"></div>
+    <details class="samples-toggle" style="margin-bottom:12px;">
+      <summary>💬 LINE等のメッセージを貼り付けてAIで絞り込み条件を抽出</summary>
+      <div style="margin-top:8px;">
+        <textarea id="filter-text-input" rows="3" placeholder="例: 北海道苫小牧市の製造業で従業員50人以上の会社を探してほしい
+&#10;先方からのLINEメッセージや要件文をそのまま貼り付けOK"></textarea>
+        <button id="filter-text-apply" style="margin-top:6px;">🤖 AIで解析して条件を設定</button>
+        <div id="filter-text-status" class="empty" style="margin-top:6px;"></div>
+      </div>
+    </details>
     <div class="action-row" style="margin-bottom:12px;">
       <button id="refine-search-btn" class="ghost">🔍 この絞り込みでウェブを精密検索（追加発見）</button>
     </div>

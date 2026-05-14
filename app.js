@@ -2058,7 +2058,7 @@ async function enrichCompany(c, onProgress) {
 async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   if (!store.opts.braveKey && !store.opts.braveProxy) throw new Error('Brave のプロキシURLまたはAPIキーを設定してください');
   const round = options.round || 0;
-  const maxQueries = options.maxQueries || 8;
+  const maxQueries = options.maxQueries || 10;
   let queries;
   if (options.queries && options.queries.length) {
     queries = options.queries;
@@ -2098,7 +2098,7 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
     const q = queries[qIdx];
     let queryCandidates = [];
     try {
-      const results = await braveSearch(q, 10);
+      const results = await braveSearch(q, 20);
       stats.totalResults += results.length;
       results.forEach((r, i) => {
         if (!r.url) { stats.excluded++; return; }
@@ -2289,6 +2289,78 @@ async function aiAnalyzeProduct(productText) {
 JSON以外は出力しないでください。`;
   const text = await callClaude({ system, prompt, max_tokens: 3000 });
   return extractJson(text);
+}
+
+async function applyFilterFromText() {
+  const text = document.getElementById('filter-text-input').value.trim();
+  const statusEl = document.getElementById('filter-text-status');
+  if (!text) { statusEl.textContent = 'テキストを入力してください'; return; }
+  if (!store.opts.aiKey && !store.opts.braveProxy) {
+    statusEl.textContent = '⚠ AI(WorkerまたはAPIキー)未設定';
+    statusEl.style.color = 'var(--danger)';
+    return;
+  }
+  statusEl.textContent = 'AI解析中…';
+  statusEl.style.color = 'var(--mid)';
+  const sys = 'あなたは営業要件のパース専門家です。自然文から絞り込み条件を抽出してJSONで返答してください。';
+  const prompt = `以下の文章から、企業検索の絞り込み条件を抽出してください。
+
+文章:
+"""
+${text}
+"""
+
+抽出項目:
+- industry: 日本標準産業分類の大分類名(製造業/建設業/卸売・小売業/飲食業/運輸業/情報通信業/金融・保険業/不動産業/医療・福祉/教育・学習支援/宿泊・サービス業/サービス業/農林水産業)から該当を1つ、または null
+- prefecture: 都道府県名(○○県/○○府/北海道/東京都) または null
+- city: 市区町村名 または null
+- size: "small"(〜50名) | "mid"(51-300) | "large"(301+) | null
+- product_addendum: 商材に追加すべき情報があれば文字列(なければ空)
+
+JSONのみ返答:
+{"industry":null,"prefecture":"北海道","city":"苫小牧市","size":"mid","product_addendum":""}`;
+  try {
+    const result = await callClaude({ system: sys, prompt, max_tokens: 400 });
+    const m = result.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('JSONパース失敗');
+    const f = JSON.parse(m[0]);
+    let applied = [];
+    if (f.industry) {
+      const sel = document.getElementById('filter-industry');
+      const opt = [...sel.options].find(o => o.value === f.industry || o.text === f.industry);
+      if (opt) { sel.value = opt.value; applied.push(`業種=${f.industry}`); }
+    }
+    if (f.prefecture) {
+      const sel = document.getElementById('filter-prefecture');
+      const opt = [...sel.options].find(o => o.value === f.prefecture || o.text === f.prefecture);
+      if (opt) { sel.value = opt.value; applied.push(`都道府県=${f.prefecture}`); }
+    }
+    if (f.city) {
+      document.getElementById('filter-city').value = f.city;
+      applied.push(`市区町村=${f.city}`);
+    }
+    if (f.size && ['small','mid','large'].includes(f.size)) {
+      document.getElementById('filter-size').value = f.size;
+      applied.push(`規模=${f.size}`);
+    }
+    if (f.product_addendum) {
+      const productEl = document.getElementById('product-input');
+      const existing = productEl.value.trim();
+      if (existing && !existing.includes(f.product_addendum)) {
+        productEl.value = existing + '。' + f.product_addendum;
+        applied.push('商材に追記');
+      } else if (!existing) {
+        productEl.value = f.product_addendum;
+        applied.push('商材を設定');
+      }
+    }
+    statusEl.textContent = applied.length > 0 ? `✓ 適用: ${applied.join(' / ')}` : '抽出条件なし';
+    statusEl.style.color = applied.length > 0 ? 'var(--good)' : 'var(--mid)';
+    if (state.scored.length > 0) renderResults();
+  } catch (e) {
+    statusEl.textContent = `失敗: ${e.message.slice(0,80)}`;
+    statusEl.style.color = 'var(--danger)';
+  }
 }
 
 async function aiScoreBatch(companies, productText) {
@@ -2963,6 +3035,7 @@ async function init() {
   document.getElementById('discover-more-btn').addEventListener('click', () => discoverMore(5));
   document.getElementById('discover-more-many-btn').addEventListener('click', () => discoverMore(10));
   document.getElementById('refine-search-btn').addEventListener('click', refineSearch);
+  document.getElementById('filter-text-apply').addEventListener('click', applyFilterFromText);
 
   // 対話モード
   document.getElementById('chat-mode-btn').addEventListener('click', startChatMode);
