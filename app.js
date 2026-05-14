@@ -1712,13 +1712,12 @@ function parseCompanyFromResult(r, idx) {
   if (!url || isExcludedDomain(url)) return null;
   const title = (r.title || '').replace(/&amp;/g, '&').trim();
   const desc = (r.description || '').replace(/<[^>]+>/g, '').trim();
-  // 会社名抽出: タイトルの "|"・"-"・"｜" 前まで
-  let name = title.split(/[\|｜\-]/)[0].trim();
-  if (!name) name = rootDomain(url);
+  // 会社名抽出: 株式会社XX / XX株式会社 等のパターン優先
+  const name = extractCompanyName(title, url);
   const phone = extractPhoneFromText(desc + ' ' + title);
   return {
     id: 500000 + Date.now() % 1000000 + idx,
-    name: name.slice(0, 80),
+    name: (name || rootDomain(url)).slice(0, 80),
     phone: phone || '',
     website: `https://${rootDomain(url)}`,
     contact_url: '',
@@ -1731,13 +1730,115 @@ function parseCompanyFromResult(r, idx) {
     keywords: desc.split(/[\s、,。]+/).filter(w => w.length >= 2).slice(0, 8),
     found_via_product: document.getElementById('product-input').value.trim().slice(0, 60),
     discovered_at: Date.now(),
+    needs_enrichment: true,
+  };
+}
+
+function extractCompanyName(title, url) {
+  if (!title) return rootDomain(url).replace(/^www\./, '').split('.')[0];
+  const cleaned = title.replace(/&amp;/g, '&').trim();
+  // 法人格パターン優先
+  const patterns = [
+    /(株式会社[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /([^\s|｜\-,／【】「」『』<>()【】]{1,30}株式会社)/,
+    /(合同会社[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /([^\s|｜\-,／【】「」『』<>()【】]{1,30}合同会社)/,
+    /(有限会社[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /([^\s|｜\-,／【】「」『』<>()【】]{1,30}有限会社)/,
+    /(医療法人[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /(社会福祉法人[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /(NPO法人[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /(一般社団法人[ 　]?[^\s|｜\-,／【】「」『』<>()【】]{1,30})/,
+    /([A-Za-z][A-Za-z0-9 ]+(?:Inc|Co\.?,?\s?Ltd|Corp|LLC|Group)\.?)/,
+  ];
+  for (const re of patterns) {
+    const m = cleaned.match(re);
+    if (m) return m[1].trim();
+  }
+  // フォールバック: タイトル最初のセグメント
+  const seg = cleaned.split(/[\|｜\-｜]/)[0].trim();
+  if (seg.length > 0 && seg.length < 50) return seg;
+  return rootDomain(url).replace(/^www\./, '').split('.')[0];
+}
+
+/* ============ HP enrichment via worker /fetch ============ */
+async function fetchPageViaProxy(targetUrl) {
+  if (!store.opts.braveProxy) return null;
+  const proxy = store.opts.braveProxy.replace(/\/+$/, '');
+  try {
+    const res = await fetch(`${proxy}/fetch?url=${encodeURIComponent(targetUrl)}`, {
+      headers: { 'Accept': 'text/html' },
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch (e) {
+    return null;
+  }
+}
+
+const JP_PREFS = ['北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県','茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県','新潟県','富山県','石川県','福井県','山梨県','長野県','岐阜県','静岡県','愛知県','三重県','滋賀県','京都府','大阪府','兵庫県','奈良県','和歌山県','鳥取県','島根県','岡山県','広島県','山口県','徳島県','香川県','愛媛県','高知県','福岡県','佐賀県','長崎県','熊本県','大分県','宮崎県','鹿児島県','沖縄県'];
+
+function extractFromHTML(html, baseUrl) {
+  if (!html) return null;
+  const out = {};
+
+  // タイトル
+  const titleM = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleM) out.title = titleM[1].replace(/\s+/g, ' ').trim();
+
+  // og:site_name は法人名の確度高い
+  const ogName = html.match(/<meta[^>]+(?:property|name)=["']og:site_name["'][^>]+content=["']([^"']+)["']/i);
+  if (ogName) out.siteName = ogName[1].trim();
+
+  // 会社名: タイトル or og:site_name から法人格を含むものを優先
+  const candidates = [out.siteName, out.title].filter(Boolean);
+  for (const c of candidates) {
+    const name = extractCompanyName(c, baseUrl);
+    if (name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|Inc|Corp|LLC|Group|Co\.,?\s?Ltd)/i.test(name)) {
+      out.name = name;
+      break;
+    }
+  }
+  if (!out.name && candidates[0]) out.name = extractCompanyName(candidates[0], baseUrl);
+
+  // 電話番号
+  const phoneM = html.match(/(?<![0-9])(?:0(?:120|800|570)|0\d{1,3})[-(ー－（]?\d{1,4}[-)ー－）]?\d{3,4}(?![0-9])/);
+  if (phoneM) out.phone = phoneM[0].replace(/[ー－（）]/g, c => ({'ー':'-','－':'-','（':'(','）':')'}[c]));
+
+  // 問い合わせURL
+  const contactM = html.match(/<a[^>]*\shref=["']([^"']+)["'][^>]*>[^<]{0,80}(?:contact|inquiry|toiawase|問い合わせ|問合せ|お問い合わせ)[^<]{0,80}<\/a>/i);
+  if (contactM) {
+    try { out.contact_url = new URL(contactM[1], baseUrl).href; } catch {}
+  }
+
+  // 都道府県
+  for (const p of JP_PREFS) {
+    if (html.includes(p)) { out.prefecture = p; break; }
+  }
+
+  return out;
+}
+
+async function enrichCompany(c, onProgress) {
+  if (!c.website || !store.opts.braveProxy) return c;
+  const html = await fetchPageViaProxy(c.website);
+  if (!html) return c;
+  const extracted = extractFromHTML(html, c.website);
+  if (!extracted) return c;
+  return {
+    ...c,
+    name: extracted.name || c.name,
+    phone: extracted.phone || c.phone,
+    contact_url: extracted.contact_url || c.contact_url,
+    prefecture: extracted.prefecture || c.prefecture,
+    needs_enrichment: false,
   };
 }
 
 async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   if (!store.opts.braveKey && !store.opts.braveProxy) throw new Error('Brave のプロキシURLまたはAPIキーを設定してください');
   const round = options.round || 0;
-  const maxQueries = options.maxQueries || 5;
+  const maxQueries = options.maxQueries || 8;
   let queries;
   if (round === 0 && store.opts.aiEnabled && store.opts.aiKey) {
     queries = await aiGenerateQueries(productText, icp);
@@ -1784,6 +1885,20 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
     }
   }
   if (found.length > 0) {
+    // HP訪問による情報補強(時間かかるが確実)
+    if (store.opts.braveProxy) {
+      onProgress?.(`${found.length}社のHPを訪問して情報補強中…（時間かかります）`);
+      for (let i = 0; i < found.length; i++) {
+        const c = found[i];
+        onProgress?.(`HP訪問 ${i+1}/${found.length}: ${c.name.slice(0,30)}`);
+        try {
+          const enriched = await enrichCompany(c);
+          Object.assign(c, enriched);
+        } catch (e) {
+          console.warn('enrich failed', c.website, e);
+        }
+      }
+    }
     store.importedCompanies.push(...found);
     saveStore();
     updateOnboarding();
@@ -2006,7 +2121,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513f');
+    const res = await fetch('data/companies.json?v=20260513g');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2273,7 +2388,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513f');
+      const res = await fetch('data/sample.json?v=20260513g');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
