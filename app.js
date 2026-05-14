@@ -133,7 +133,8 @@ function getAllCompanies() {
 
 function updateOnboarding() {
   const total = getAllCompanies().length;
-  document.getElementById('onboarding-panel').hidden = total > 0;
+  const onb = document.getElementById('onboarding-panel');
+  if (onb) onb.hidden = total > 0;
   const statTotal = document.getElementById('stat-total');
   if (statTotal) statTotal.textContent = total;
 }
@@ -1253,8 +1254,8 @@ async function openScript(company) {
     `${company.name} / ${company.industry} / ${company.prefecture}${company.city?' '+company.city:''} / 適合度 ${company.score}`;
   const textEl = document.getElementById('script-text');
   modal.hidden = false;
-  if (store.opts.aiEnabled && store.opts.aiKey && state.icp && state.strategy) {
-    textEl.textContent = '🤖 Claude が生成中…';
+  if (store.opts.aiKey || store.opts.braveProxy) {
+    textEl.textContent = '🤖 AI が生成中…';
     try {
       const productText = document.getElementById('product-input').value.trim();
       const script = await aiScript(company, productText, state.icp, state.strategy);
@@ -1787,7 +1788,7 @@ function generateQueriesFromICP(productText, icp, round = 0) {
 }
 
 async function aiGenerateQueries(productText, icp) {
-  if (!store.opts.aiEnabled || !store.opts.aiKey) return generateQueriesFromICP(productText, icp);
+  if (!store.opts.aiKey && !store.opts.braveProxy) return generateQueriesFromICP(productText, icp);
   try {
     const prompt = `以下の商材を購入しそうな日本企業をWeb検索で見つけるためのクエリを5個、JSON配列のみで返してください。
 
@@ -1946,7 +1947,7 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   let queries;
   if (options.queries && options.queries.length) {
     queries = options.queries;
-  } else if (round === 0 && store.opts.aiEnabled && store.opts.aiKey) {
+  } else if (round === 0 && (store.opts.aiKey || store.opts.braveProxy)) {
     queries = await aiGenerateQueries(productText, icp);
   } else {
     queries = generateQueriesFromICP(productText, icp, round);
@@ -2287,7 +2288,7 @@ async function runPipeline(input, options = {}) {
     alert('企業データが0件です。先に「🌐 ウェブから企業を発見して分析」で発見するか、サイドバーから取込してください。');
     return;
   }
-  if ((store.opts.aiEnabled || store.opts.aiKey) && store.opts.aiKey) {
+  if (store.opts.aiKey || store.opts.braveProxy) {
     setAIStatus('AI分析中…', 'mid');
     try {
       const result = await aiAnalyzeProduct(input);
@@ -2483,7 +2484,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513n');
+    const res = await fetch('data/companies.json?v=20260513o');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2773,7 +2774,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513n');
+      const res = await fetch('data/sample.json?v=20260513o');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
