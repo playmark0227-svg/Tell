@@ -1575,8 +1575,9 @@ function importJson(file) {
 }
 
 /* ============ Claude API (BYOK) ============ */
-async function callClaude({ system, prompt, max_tokens = 1024 }) {
+async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
   if (!store.opts.aiKey) throw new Error('APIキーが未設定です');
+  const msgs = messages || [{ role: 'user', content: prompt }];
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -1589,7 +1590,7 @@ async function callClaude({ system, prompt, max_tokens = 1024 }) {
       model: store.opts.aiModel || 'claude-haiku-4-5-20251001',
       max_tokens,
       system,
-      messages: [{ role: 'user', content: prompt }],
+      messages: msgs,
     }),
   });
   if (!res.ok) {
@@ -2115,6 +2116,115 @@ async function aiScript(company, productText, icp, strategy) {
   return await callClaude({ system, prompt, max_tokens: 1500 });
 }
 
+/* ============ AI Chat Mode ============ */
+const CHAT_SYSTEM = `あなたはB2B営業戦略のシニアコンサルタントです。ユーザーが売りたい商材について自然な会話で深掘りし、最終的に営業戦略立案に必要な情報を引き出してください。
+
+会話の流れ(柔軟に):
+1) 商品/サービスの概要・価値
+2) ターゲット業種・規模
+3) 主な価値訴求ポイント・差別化
+4) 価格帯
+5) 既存顧客の特徴・成功事例
+6) 営業上の課題・困っていること
+
+ルール:
+- 1ターンで質問は1〜2問だけ。短く。
+- ユーザーの回答に共感・確認してから次の質問へ。
+- カジュアルで自然な日本語(敬語ベース)。
+- 上記6観点が概ね揃ったら、最後に「ありがとうございます。これまでの情報をまとめます」と言い、商材を1段落のリッチな説明文に要約。要約の最後に必ず [FINALIZE] というマーカーを付ける。
+- ユーザーが早く終わらせたい意図を示したら、その時点で要約に進む。`;
+
+let chatHistory = [];
+
+function appendChatMessage(role, text) {
+  const logEl = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${role}`;
+  div.innerHTML = `
+    <div class="avatar">${role === 'user' ? '👤' : '🤖'}</div>
+    <div class="bubble">${escapeHtml(text)}</div>
+  `;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+  return div;
+}
+
+function appendLoadingMsg() {
+  const logEl = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = 'chat-msg assistant loading';
+  div.innerHTML = `<div class="avatar">🤖</div><div class="bubble"></div>`;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+  return div;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function startChatMode() {
+  if (!store.opts.aiKey) {
+    alert('対話モードにはAnthropic APIキーが必要です。サイドバー「🤖 AI設定」から登録してください。');
+    return;
+  }
+  chatHistory = [];
+  document.getElementById('chat-log').innerHTML = '';
+  document.getElementById('chat-finalize').disabled = true;
+  document.getElementById('chat-modal').hidden = false;
+  document.getElementById('chat-input').focus();
+  const opener = 'こんにちは!営業戦略を一緒に組み立てます。\n\nまず、どんな商材を売っていらっしゃいますか? 商品名・サービス名と概要をざっくり教えてください。';
+  appendChatMessage('assistant', opener);
+  chatHistory.push({ role: 'assistant', content: opener });
+}
+
+async function sendChatMessage() {
+  const inputEl = document.getElementById('chat-input');
+  const text = inputEl.value.trim();
+  if (!text) return;
+  inputEl.value = '';
+  appendChatMessage('user', text);
+  chatHistory.push({ role: 'user', content: text });
+
+  const loadingEl = appendLoadingMsg();
+  try {
+    const reply = await callClaude({
+      system: CHAT_SYSTEM,
+      messages: chatHistory,
+      max_tokens: 1024,
+    });
+    loadingEl.remove();
+    appendChatMessage('assistant', reply.replace('[FINALIZE]', '').trim());
+    chatHistory.push({ role: 'assistant', content: reply });
+    if (reply.includes('[FINALIZE]')) {
+      document.getElementById('chat-finalize').disabled = false;
+      document.getElementById('chat-finalize').textContent = '✓ この内容で確定して分析へ';
+    }
+  } catch (e) {
+    loadingEl.remove();
+    appendChatMessage('assistant', `エラー: ${e.message}`);
+  }
+}
+
+function finalizeChat() {
+  // 最後の assistant メッセージ(要約)を取得
+  const lastAssistant = [...chatHistory].reverse().find(m => m.role === 'assistant');
+  if (!lastAssistant) return;
+  // [FINALIZE] マーカーの直前までを抽出
+  let summary = lastAssistant.content.replace(/\[FINALIZE\]/g, '').trim();
+  // 「これまでの情報をまとめます」以降の段落を取り出す試み
+  const m = summary.match(/(?:まとめます[。:：]?\s*)([\s\S]+)$/);
+  if (m) summary = m[1].trim();
+  document.getElementById('product-input').value = summary;
+  document.getElementById('chat-modal').hidden = true;
+  // 自動で分析を実行
+  setTimeout(() => {
+    document.getElementById('analyze-btn').click();
+  }, 200);
+}
+
 /* ============ Pipeline ============ */
 async function runPipeline(input, options = {}) {
   const { discover = false } = options;
@@ -2122,8 +2232,8 @@ async function runPipeline(input, options = {}) {
     alert('企業データが0件です。先に「🌐 ウェブから企業を発見して分析」で発見するか、サイドバーから取込してください。');
     return;
   }
-  if (store.opts.aiEnabled && store.opts.aiKey) {
-    setAIStatus('分析中…', 'mid');
+  if ((store.opts.aiEnabled || store.opts.aiKey) && store.opts.aiKey) {
+    setAIStatus('AI分析中…', 'mid');
     try {
       const result = await aiAnalyzeProduct(input);
       state.classification = {
@@ -2308,7 +2418,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513j');
+    const res = await fetch('data/companies.json?v=20260513k');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2413,7 +2523,15 @@ async function init() {
     else setAIStatus('AIモード OFF（ルールベース）', 'mid');
   });
   document.getElementById('opt-ai-key').addEventListener('input', e => {
-    store.opts.aiKey = e.target.value.trim();
+    const newKey = e.target.value.trim();
+    const wasEmpty = !store.opts.aiKey;
+    store.opts.aiKey = newKey;
+    // キーを新規に入力したら自動でAIモードON
+    if (wasEmpty && newKey) {
+      store.opts.aiEnabled = true;
+      document.getElementById('opt-ai-enabled').checked = true;
+      document.getElementById('badge-ai').textContent = 'ON';
+    }
     saveStore();
   });
   document.getElementById('opt-ai-model').addEventListener('change', e => {
@@ -2445,6 +2563,20 @@ async function init() {
   document.getElementById('discover-more-btn').addEventListener('click', () => discoverMore(5));
   document.getElementById('discover-more-many-btn').addEventListener('click', () => discoverMore(10));
   document.getElementById('refine-search-btn').addEventListener('click', refineSearch);
+
+  // 対話モード
+  document.getElementById('chat-mode-btn').addEventListener('click', startChatMode);
+  document.getElementById('chat-send').addEventListener('click', sendChatMessage);
+  document.getElementById('chat-input').addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); sendChatMessage(); }
+  });
+  document.getElementById('chat-finalize').addEventListener('click', finalizeChat);
+  document.getElementById('chat-cancel').addEventListener('click', () => {
+    document.getElementById('chat-modal').hidden = true;
+  });
+  document.getElementById('chat-modal').addEventListener('click', e => {
+    if (e.target.id === 'chat-modal') e.target.hidden = true;
+  });
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2576,7 +2708,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513j');
+      const res = await fetch('data/sample.json?v=20260513k');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)

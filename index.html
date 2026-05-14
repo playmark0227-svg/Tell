@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513j">
+<link rel="stylesheet" href="style.css?v=20260513k">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -247,6 +247,7 @@
     <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
     <div class="action-row">
       <button id="analyze-btn">🌐 ウェブから企業を発見して分析</button>
+      <button id="chat-mode-btn" class="ghost">🤖 AIと対話して商材を設定</button>
       <button id="analyze-existing-btn" class="ghost">登録済み企業のみ分析</button>
     </div>
     <div id="discovery-progress" class="discovery-progress" hidden></div>
@@ -372,6 +373,22 @@
 
 </main>
 
+<div id="chat-modal" class="modal" hidden>
+  <div class="modal-content wide">
+    <h3>🤖 AIと対話して商材を設定</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:10px;">商材について5〜6回のやり取りで深掘りします。完了したら自動で分析画面へ。</div>
+    <div id="chat-log" class="chat-log"></div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="2" placeholder="メッセージを入力 (Cmd+Enterで送信)"></textarea>
+      <button id="chat-send">送信</button>
+    </div>
+    <div class="modal-actions">
+      <button id="chat-finalize" disabled>この内容で確定して分析へ</button>
+      <button id="chat-cancel" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div id="call-modal" class="modal" hidden>
   <div class="modal-content">
     <h3 id="call-title">架電記録</h3>
@@ -426,6 +443,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513j"></script>
+<script src="app.js?v=20260513k"></script>
 </body>
 </html>
