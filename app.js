@@ -1042,7 +1042,7 @@ function renderRow(c) {
   const isDnc = store.dnc.has(c.id);
   const status = store.status[c.id] || '';
   const hasNote = !!store.notes[c.id];
-  const trClass = [isSaved ? 'saved-row' : '', isDnc ? 'dnc-row' : ''].filter(Boolean).join(' ');
+  const trClass = [isSaved ? 'saved-row' : '', isDnc ? 'dnc-row' : '', c.pending ? 'pending-row' : ''].filter(Boolean).join(' ');
   const urls = getCompanyUrls(c);
   const phoneCell = hasPhone(c)
     ? `<a href="tel:${c.phone.replace(/[^0-9+]/g, '')}">${c.phone}</a>`
@@ -2078,26 +2078,42 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ 検索エラー: ${e.message.slice(0,50)}`);
       continue;
     }
-    // 各候補をHP訪問→検証→即追加
+    // まず候補をリストに「評価中」として即追加(ユーザー視点で即座に表示)
+    queryCandidates.forEach(c => {
+      c.pending = true;
+      c.score = 50;
+      c.reasoning = '🔍 HP訪問・AI評価中…';
+      c.aiComment = '🔍 評価中…';
+    });
+    if (queryCandidates.length > 0) {
+      store.importedCompanies.push(...queryCandidates);
+      saveStore();
+      updateOnboarding();
+      rescore();
+    }
+    // 各候補をHP訪問→AI評価→確定 or 削除
     for (let i = 0; i < queryCandidates.length; i++) {
       const c = queryCandidates[i];
-      onProgress?.(`${qIdx+1}/${queries.length} | HP訪問 ${i+1}/${queryCandidates.length}: ${c.name.slice(0,30)} …`);
+      onProgress?.(`${qIdx+1}/${queries.length} | HP訪問 ${i+1}/${queryCandidates.length}: ${c.name.slice(0,30)}…`);
       try {
         const enriched = await enrichCompanyDeep(c, productText);
         Object.assign(c, enriched);
       } catch (e) {
         console.warn('enrich failed', c.website, e);
       }
+      c.pending = false;
       if (isLikelyRealCompany(c)) {
-        store.importedCompanies.push(c);
         found.push(c);
         totalValidated++;
         saveStore();
-        updateOnboarding();
         rescore();
-        onProgress?.(`✓ +${c.name.slice(0,30)} （累計${totalValidated}社）`);
+        onProgress?.(`✓ ${c.name.slice(0,30)} 評価完了 (累計${totalValidated}社)`);
       } else {
-        onProgress?.(`× 非法人除外: ${c.name.slice(0,30)}`);
+        // 評価失敗→リストから削除
+        store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
+        saveStore();
+        rescore();
+        onProgress?.(`× ${c.name.slice(0,30)} 非法人として除外`);
       }
     }
   }
@@ -2228,23 +2244,26 @@ JSON以外は出力しないでください。`;
 
 async function aiScoreBatch(companies, productText) {
   if (companies.length === 0) return [];
-  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と複数の企業情報から、各企業がその商材を購入する適合度を厳しく評価してJSON配列のみで返答してください。`;
+  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と複数の企業情報から、各企業がその商材を購入する適合度を評価してJSON配列のみで返答してください。`;
   const list = companies.map((c, i) =>
     `${i+1}. ${c.name} (${c.industry||'業種不明'} / ${c.prefecture||''}${c.city||''} / 従業員${c.employees||'?'}名): ${(c.description||'').slice(0,200)}`
   ).join('\n');
   const prompt = `商材: ${productText}
 
-以下${companies.length}社それぞれの購入適合度を0-100で厳しく評価:
+以下${companies.length}社それぞれの購入適合度を0-100で評価:
 ${list}
 
-評価基準:
-- 事業内容と商材の関連性
-- 想定される購入動機の強さ
-- 規模感の適合
-- 既存ベンダー導入の兆候があれば減点
+スコア目安:
+- 80-100: 主力ターゲット業種・規模に完全合致、購入動機が強い
+- 60-79: 関連性高い、検討余地大、要アプローチ
+- 40-59: 可能性あり、要ヒアリング
+- 20-39: 関連性弱、優先度低
+- 0-19: 不適合
 
-JSON配列のみ返答(他のテキスト不要):
-[{"i":1,"s":80,"r":"30文字以内の根拠"},{"i":2,"s":40,"r":"..."},...]`;
+可能性がある会社にはきちんと点数を付けてください(60〜80に集中させてOK)。点数を下げすぎないでください。
+
+JSON配列のみ返答:
+[{"i":1,"s":75,"r":"根拠30字"},{"i":2,"s":62,"r":"..."},...]`;
   try {
     const text = await callClaude({ system: sys, prompt, max_tokens: 2000 });
     const m = text.match(/\[[\s\S]*\]/);
@@ -2297,7 +2316,7 @@ async function batchScoreExisting(productText, onProgress) {
 
 async function aiScoreCompany(company, productText, hpText) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
-  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と企業情報から、その企業がその商材を購入する適合度を厳しく評価してください。JSONのみで返答。`;
+  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と企業情報から、その企業がその商材を購入する適合度を評価してください。JSONのみで返答。`;
   const prompt = `商材: ${productText}
 
 企業情報:
@@ -2307,11 +2326,14 @@ async function aiScoreCompany(company, productText, hpText) {
 - HP説明: ${(company.description || '').slice(0, 200)}
 - HPテキスト抜粋: ${(hpText || '').slice(0, 1500)}
 
-評価基準:
-1. この企業の事業内容と商材の関連性
-2. 想定される購入動機の強さ
-3. 既存ベンダー/競合導入の兆候
-4. 規模感の適合
+スコア目安:
+- 80-100: 主力ターゲット業種・規模に完全合致、購入動機が強い
+- 60-79: 関連性高い、検討余地大、要アプローチ
+- 40-59: 可能性あり、要ヒアリング
+- 20-39: 関連性弱
+- 0-19: 不適合
+
+可能性のある会社には適切な点数を付けてください。点数を下げすぎないでください。
 
 以下のJSONのみ返答:
 {"score": 0-100の整数, "reasoning": "30文字程度の根拠", "fit": "high|mid|low"}`;

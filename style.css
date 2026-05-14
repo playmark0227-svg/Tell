@@ -736,6 +736,8 @@ tbody tr { transition: background 0.1s; }
 tbody tr:hover { background: var(--panel-elev); }
 tr.saved-row { background: #fffaeb; }
 tr.dnc-row { opacity: 0.4; }
+tr.pending-row { opacity: 0.7; background: linear-gradient(90deg, var(--panel) 0%, #fef3c7 50%, var(--panel) 100%); background-size: 200% 100%; animation: pendingPulse 2s linear infinite; }
+@keyframes pendingPulse { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
 .score {
   display: inline-block;
