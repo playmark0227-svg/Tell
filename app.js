@@ -1061,7 +1061,7 @@ function renderRow(c) {
           <button class="act-script" title="スクリプト">📜</button>
         </div>
       </td>
-      <td data-label="会社名">${c.name}</td>
+      <td data-label="会社名">${cleanCompanyName(c.name) || c.name}</td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">${c.prefecture}${c.city ? ' ' + c.city : ''}</td>
       <td data-label="規模">${c.employees}名</td>
@@ -1724,20 +1724,58 @@ const NOISE_URL_PATTERNS = [
 ];
 
 const STRONG_ARTICLE_PATTERNS = [
-  /とは[？\?！\!　\s]*$/,
-  /徹底比較/, /徹底解説/, /完全ガイド/, /完全網羅/,
-  /おすすめ.{0,5}\d+選/, /厳選.{0,5}\d+選/,
-  /ランキング/, /の選び方/, /の方法/,
-  /解説[!！]/, /\d+選[！!]?$/,
-  /メリット.{0,3}デメリット/, /違いを/,
+  /とは[？\?]/, // とは? がどこかにある
+  /徹底.{0,5}(比較|解説|ガイド)/,
+  /完全.{0,5}(ガイド|網羅|版)/,
+  /おすすめ.{0,8}\d+選/, /厳選.{0,8}\d+選/,
+  /ランキング/, /の選び方/, /の方法$/,
+  /解説[!！]/, /わかりやすく解説/, /問題点.{0,10}解説/,
+  /違いを.{0,8}(解説|まとめ|紹介)/,
+  /メリット.{0,3}デメリット/,
+  /\d+選[!！]?$/,
+  /の問題点/, /の対応ポイント/, /の課題と/,
+  /って何/, /ってなに/,
 ];
+
+function migrateCleanCompanies() {
+  let cleanedCount = 0;
+  let removedCount = 0;
+  ['importedCompanies', 'customCompanies'].forEach(key => {
+    const list = store[key] || [];
+    const kept = [];
+    for (const c of list) {
+      const newName = cleanCompanyName(c.name);
+      if (newName !== c.name) {
+        c.name = newName;
+        cleanedCount++;
+      }
+      // 名前が記事タイトルや空、または法人格を含まないものは削除
+      if (!c.name || isGenericName(c.name) || looksLikeArticle(c.name, c.source_url || c.website, c.description || '')) {
+        removedCount++;
+        continue;
+      }
+      kept.push(c);
+    }
+    store[key] = kept;
+  });
+  if (cleanedCount > 0 || removedCount > 0) {
+    console.log(`migration: ${cleanedCount}社の名前を整形、${removedCount}社の記事/汎用エントリを削除`);
+    saveStore();
+  }
+}
+
+function cleanCompanyName(name) {
+  if (!name) return '';
+  let cleaned = String(name).replace(/&amp;/g, '&').trim();
+  // ポータル経由のタイトルから会社名抜き出し
+  cleaned = cleaned.replace(/(の求人.*|の採用情報.*|の採用.*|の仕事.*|の転職.*|の中途.*|\s*[\|｜]\s*(求人|採用|転職|マイナビ|リクナビ|Indeed|エン転職|doda|type|エン・ジャパン).*)$/i, '').trim();
+  return cleaned;
+}
 
 function looksLikeArticle(title, url, desc) {
   const text = `${title || ''} ${desc || ''}`;
   if (url && NOISE_URL_PATTERNS.some(re => re.test(url))) return true;
-  // 強い単一パターン
   if (STRONG_ARTICLE_PATTERNS.some(re => re.test(title || ''))) return true;
-  // 複数キーワード
   let count = 0;
   for (const kw of ARTICLE_KEYWORDS) {
     if (text.includes(kw)) count++;
@@ -1767,10 +1805,13 @@ function isGenericName(name) {
 }
 
 function isLikelyRealCompany(c) {
+  // 名前自体が記事タイトルっぽければ除外
   if (looksLikeArticle(c.name, c.source_url || c.website, c.description)) return false;
   if (isGenericName(c.name)) return false;
+  // クリーンした名前で法人格判定
+  const cleanedName = cleanCompanyName(c.name);
   const corpRe = /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人|宗教法人|協同組合|Inc\.?|Corp\.?|LLC|Co\.,?\s?Ltd|Group|Company)/i;
-  return corpRe.test(c.name || '');
+  return corpRe.test(cleanedName);
 }
 function isExcludedDomain(url) {
   const d = rootDomain(url);
@@ -2760,6 +2801,8 @@ async function init() {
   }
 
   loadStore();
+  // 既存ストアの一括クリーンアップ: 古い名前を整形 & 記事を除外
+  migrateCleanCompanies();
   updateOnboarding();
 
   const countEl = document.getElementById('category-count');
