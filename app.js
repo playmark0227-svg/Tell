@@ -2143,7 +2143,10 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         console.warn('enrich failed', c.website, e);
       }
       c.pending = false;
-      if (isLikelyRealCompany(c)) {
+      // AI判定優先: ai_is_company が明示的にfalseなら除外
+      const aiSaysNotCompany = c.ai_is_company === false;
+      const passesRule = !aiSaysNotCompany && isLikelyRealCompany(c);
+      if (passesRule) {
         found.push(c);
         totalValidated++;
         saveStore();
@@ -2154,7 +2157,8 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
         saveStore();
         rescore();
-        onProgress?.(`× ${c.name.slice(0,30)} 非法人として除外`);
+        const reason = aiSaysNotCompany ? 'AI判定で非法人' : '非法人';
+        onProgress?.(`× ${c.name.slice(0,30)} ${reason}として除外`);
       }
     }
   }
@@ -2230,6 +2234,10 @@ async function enrichCompanyDeep(c, productText) {
       best.ai_score = ai.score;
       best.ai_reasoning = ai.reasoning;
       best.ai_fit = ai.fit;
+      best.ai_is_company = ai.is_company;
+      if (ai.name && ai.name.length >= 3) {
+        best.name = cleanCompanyName(ai.name);
+      }
     }
   }
   return best;
@@ -2285,37 +2293,39 @@ JSON以外は出力しないでください。`;
 
 async function aiScoreBatch(companies, productText) {
   if (companies.length === 0) return [];
-  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と複数の企業情報から、各企業がその商材を購入する適合度を評価してJSON配列のみで返答してください。`;
+  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家を兼任します。各エントリが日本の実在法人か検証し、商材への適合度を評価してください。`;
   const list = companies.map((c, i) =>
-    `${i+1}. ${c.name} (${c.industry||'業種不明'} / ${c.prefecture||''}${c.city||''} / 従業員${c.employees||'?'}名): ${(c.description||'').slice(0,200)}`
+    `${i+1}. 名前:"${c.name}" / URL:${c.source_url || c.website || ''} / 業種:${c.industry||'?'} / 所在:${c.prefecture||''}${c.city||''} / 説明:${(c.description||'').slice(0,200)}`
   ).join('\n');
   const prompt = `商材: ${productText}
 
-以下${companies.length}社それぞれの購入適合度を0-100で評価:
+以下${companies.length}社それぞれを判定:
 ${list}
 
-スコア目安:
-- 80-100: 主力ターゲット業種・規模に完全合致、購入動機が強い
-- 60-79: 関連性高い、検討余地大、要アプローチ
-- 40-59: 可能性あり、要ヒアリング
-- 20-39: 関連性弱、優先度低
-- 0-19: 不適合
-
-可能性がある会社にはきちんと点数を付けてください(60〜80に集中させてOK)。点数を下げすぎないでください。
+各社について:
+1. 「is_company」: 実在する法人なら true。記事/ガイド/比較/ランキングページや、求人ポータルの集約ページ、「○○の求人」「○○の選び方」「○○とは」のような、企業ではないものは false。
+2. 「name」: 正しい法人名(株式会社/合同会社/有限会社/医療法人等を含む)。タイトルからノイズを除去したクリーンな名前。法人名が判別できなければ null。
+3. 「s」: 適合度0-100。is_companyがfalseなら0でOK。
+   - 80-100: 主力ターゲットに完全合致
+   - 60-79: 関連性高い
+   - 40-59: 可能性あり
+4. 「r」: 30字以内の根拠
 
 JSON配列のみ返答:
-[{"i":1,"s":75,"r":"根拠30字"},{"i":2,"s":62,"r":"..."},...]`;
+[{"i":1,"is_company":true,"name":"株式会社XXX","s":75,"r":"..."},...]`;
   try {
-    const text = await callClaude({ system: sys, prompt, max_tokens: 2000 });
+    const text = await callClaude({ system: sys, prompt, max_tokens: 2500 });
     const m = text.match(/\[[\s\S]*\]/);
     if (!m) return null;
     const arr = JSON.parse(m[0]);
     return companies.map((_, idx) => {
-      const found = arr.find(x => x.i === idx + 1);
-      if (!found) return null;
+      const f = arr.find(x => x.i === idx + 1);
+      if (!f) return null;
       return {
-        score: Math.max(0, Math.min(100, parseInt(found.s, 10) || 0)),
-        reasoning: String(found.r || '').slice(0, 80),
+        is_company: f.is_company !== false,
+        name: f.name || null,
+        score: Math.max(0, Math.min(100, parseInt(f.s, 10) || 0)),
+        reasoning: String(f.r || '').slice(0, 80),
       };
     });
   } catch (e) {
@@ -2336,13 +2346,26 @@ async function batchScoreExisting(productText, onProgress) {
     onProgress?.(`既存企業を商材に対して再評価 ${i+1}-${end}/${needScoring.length}…`);
     const results = await aiScoreBatch(batch, productText);
     if (results) {
+      const toRemoveIds = [];
       batch.forEach((c, j) => {
-        if (results[j]) {
-          c.ai_score = results[j].score;
-          c.ai_reasoning = results[j].reasoning;
-          c.ai_scored_for = productText.slice(0, 60);
+        if (!results[j]) return;
+        if (results[j].is_company === false) {
+          toRemoveIds.push(c.id);
+          return;
+        }
+        c.ai_score = results[j].score;
+        c.ai_reasoning = results[j].reasoning;
+        c.ai_scored_for = productText.slice(0, 60);
+        if (results[j].name && results[j].name.length >= 3) {
+          c.name = cleanCompanyName(results[j].name);
         }
       });
+      if (toRemoveIds.length > 0) {
+        const idsSet = new Set(toRemoveIds);
+        store.importedCompanies = store.importedCompanies.filter(x => !idsSet.has(x.id));
+        store.customCompanies = store.customCompanies.filter(x => !idsSet.has(x.id));
+        onProgress?.(`× AI判定で${toRemoveIds.length}社を非法人として除外`);
+      }
       saveStore();
       // 部分的に再描画
       const allC = getAllCompanies();
@@ -2357,33 +2380,33 @@ async function batchScoreExisting(productText, onProgress) {
 
 async function aiScoreCompany(company, productText, hpText) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
-  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と企業情報から、その企業がその商材を購入する適合度を評価してください。JSONのみで返答。`;
+  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから適合度を評価してください。JSONのみで返答。`;
   const prompt = `商材: ${productText}
 
 企業情報:
 - 会社名: ${company.name}
+- URL: ${company.source_url || company.website || ''}
 - 業種: ${company.industry || '不明'}
 - 所在地: ${company.prefecture || ''} ${company.city || ''}
 - HP説明: ${(company.description || '').slice(0, 200)}
 - HPテキスト抜粋: ${(hpText || '').slice(0, 1500)}
 
-スコア目安:
-- 80-100: 主力ターゲット業種・規模に完全合致、購入動機が強い
-- 60-79: 関連性高い、検討余地大、要アプローチ
-- 40-59: 可能性あり、要ヒアリング
-- 20-39: 関連性弱
-- 0-19: 不適合
+判定項目:
+1. is_company: 日本の実在法人(株式会社/合同会社等)か。記事/ガイド/比較/ランキング/求人ポータル等の場合は false
+2. name: クリーンな法人名。タイトルからノイズ除去、HPから正式な法人名が判明すれば優先
+3. score: 0-100の適合度(80+/60-79/40-59/20-39/0-19の目安)
+4. reasoning: 30字以内の根拠
 
-可能性のある会社には適切な点数を付けてください。点数を下げすぎないでください。
-
-以下のJSONのみ返答:
-{"score": 0-100の整数, "reasoning": "30文字程度の根拠", "fit": "high|mid|low"}`;
+JSONのみ返答:
+{"is_company": true|false, "name": "株式会社XXX or null", "score": 0-100, "reasoning": "..."}`;
   try {
-    const text = await callClaude({ system: sys, prompt, max_tokens: 300 });
+    const text = await callClaude({ system: sys, prompt, max_tokens: 400 });
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const obj = JSON.parse(m[0]);
     return {
+      is_company: obj.is_company !== false,
+      name: obj.name || null,
       score: Math.max(0, Math.min(100, parseInt(obj.score, 10) || 0)),
       reasoning: obj.reasoning || '',
       fit: obj.fit || 'mid',
