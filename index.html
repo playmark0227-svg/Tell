@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513e">
+<link rel="stylesheet" href="style.css?v=20260513f">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -134,14 +134,13 @@
   <div class="sidebar-section collapsible" data-open="true">
     <div class="side-head"><span>🌐 ウェブ検索（Brave）</span><span class="badge" id="badge-brave">OFF</span></div>
     <div class="side-body">
-      <label class="side-label">プロキシURL（Cloudflare Worker）</label>
-      <input type="text" id="opt-brave-proxy" placeholder="https://xxx.workers.dev">
-      <label class="side-label" style="margin-top:8px;">Brave APIキー（プロキシ未設定時のみ使用・通常は空でOK）</label>
-      <input type="password" id="opt-brave-key" placeholder="BSA... (オプション)">
+      <label class="side-label">Worker URL または APIキー</label>
+      <input type="text" id="opt-brave-input" placeholder="https://xxx.workers.dev もしくは BSA...">
+      <div id="brave-detected" class="empty" style="margin-top:4px;font-size:11px;">未入力</div>
       <button class="side-btn" id="brave-test">接続テスト</button>
       <div id="brave-status" class="empty">未接続</div>
       <p class="empty" style="font-size:11px;line-height:1.5;margin-top:6px;">
-        ⚠️ Brave APIはブラウザ直接呼び出し不可(CORS)。<a href="https://github.com/playmark0227-svg/Tell/blob/claude/docomo-phone-list-0fW8S/worker/brave-proxy.js" target="_blank">worker/brave-proxy.js</a> をCloudflare Workerにデプロイして、そのURLを上に貼ってください（無料・5分）。
+        ⚠️ Brave APIはブラウザ直接呼出不可(CORS)のため、<a href="https://github.com/playmark0227-svg/Tell/blob/claude/docomo-phone-list-0fW8S/worker/brave-proxy.js" target="_blank">Cloudflare Workerプロキシ</a>のURLを推奨。URLでもAPIキーでもこの欄に貼ればOK（自動判別）。
       </p>
     </div>
   </div>
@@ -423,6 +422,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513e"></script>
+<script src="app.js?v=20260513f"></script>
 </body>
 </html>

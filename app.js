@@ -2006,7 +2006,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513e');
+    const res = await fetch('data/companies.json?v=20260513f');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2043,26 +2043,50 @@ async function init() {
 
   // プロファイル保存
   document.getElementById('prof-save').addEventListener('click', saveProfile);
-  document.getElementById('opt-brave-key').value = store.opts.braveKey || '';
-  document.getElementById('opt-brave-proxy').value = store.opts.braveProxy || '';
+  // 旧設定のマイグレーション: braveKeyがURLっぽければproxyに移す
+  if (store.opts.braveKey && /^https?:\/\//.test(store.opts.braveKey)) {
+    store.opts.braveProxy = store.opts.braveKey;
+    store.opts.braveKey = '';
+    saveStore();
+  }
+  // 1欄表示: 現在の値はproxyかkeyのどちらか
+  const braveInput = document.getElementById('opt-brave-input');
+  const braveDetected = document.getElementById('brave-detected');
   const updateBraveBadge = () => {
     const on = !!(store.opts.braveKey || store.opts.braveProxy);
     document.getElementById('badge-brave').textContent = on ? 'ON' : 'OFF';
   };
+  const updateBraveDetected = () => {
+    if (store.opts.braveProxy) {
+      braveDetected.textContent = `✓ Workerプロキシ: ${store.opts.braveProxy}`;
+      braveDetected.style.color = 'var(--good)';
+    } else if (store.opts.braveKey) {
+      braveDetected.textContent = '⚠ APIキーモード（CORSで動かない可能性あり。Worker URL推奨）';
+      braveDetected.style.color = 'var(--mid)';
+    } else {
+      braveDetected.textContent = '未入力';
+      braveDetected.style.color = 'var(--muted)';
+    }
+  };
+  braveInput.value = store.opts.braveProxy || store.opts.braveKey || '';
   updateBraveBadge();
-  document.getElementById('opt-brave-key').addEventListener('input', e => {
-    store.opts.braveKey = e.target.value.trim();
+  updateBraveDetected();
+  braveInput.addEventListener('input', e => {
+    const v = e.target.value.trim();
+    if (/^https?:\/\//.test(v)) {
+      store.opts.braveProxy = v.replace(/\/+$/, '');
+      store.opts.braveKey = '';
+    } else {
+      store.opts.braveKey = v;
+      store.opts.braveProxy = '';
+    }
     updateBraveBadge();
-    saveStore();
-  });
-  document.getElementById('opt-brave-proxy').addEventListener('input', e => {
-    store.opts.braveProxy = e.target.value.trim();
-    updateBraveBadge();
+    updateBraveDetected();
     saveStore();
   });
   document.getElementById('brave-test').addEventListener('click', async () => {
     const statusEl = document.getElementById('brave-status');
-    if (!store.opts.braveKey) { statusEl.textContent = 'キーを入力してください'; statusEl.style.color = 'var(--danger)'; return; }
+    if (!store.opts.braveKey && !store.opts.braveProxy) { statusEl.textContent = 'URLかキーを入力してください'; statusEl.style.color = 'var(--danger)'; return; }
     statusEl.textContent = 'テスト中…'; statusEl.style.color = 'var(--mid)';
     try {
       const r = await braveSearch('テスト', 1);
@@ -2249,7 +2273,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513e');
+      const res = await fetch('data/sample.json?v=20260513f');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
