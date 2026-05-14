@@ -647,6 +647,14 @@ const CATEGORY_STRATEGY = {
     decision_maker: '総務部長・経営者・人事',
     motivation: '従業員満足度向上、来客対応、ペットボトル廃棄削減、福利厚生のアピール',
     avoid: '工場・現場直行直帰中心で本社事務所が小規模、既設済',
+    budget_range: '月額3,000〜10,000円/台、5年契約が標準。サーバー無償+水代のみのプランあり',
+    meeting_time: '初回15分（用途・人数ヒアリング）、設置打合せ30分',
+    objections: '①既存ベンダーがある ②置き場所がない ③衛生面・水質懸念 ④誰が管理するか不明',
+    differentiators: '①水質（RO/天然水）②サーバー無償／有償の選択肢 ③配送頻度の柔軟性 ④常温水・温水・冷水対応',
+    approach: '冒頭で「来客対応・採用競争力」の話題から入り、福利厚生改善とコスト比較で締める',
+    market_context: 'コロナ後の出社回帰で需要再拡大、福利厚生強化トレンド、ペットボトル削減のESG文脈',
+    key_questions: '①従業員数・出社率 ②現在の飲料調達方法 ③設置スペース ④福利厚生方針 ⑤決裁者',
+    timing: '期初（4月）・組織変更時・オフィス移転時・夏前（5-6月）',
   },
   attendance: {
     target_signals: ['pain_efficiency', 'has_field_work', 'has_24h'],
@@ -723,14 +731,25 @@ const CATEGORY_STRATEGY = {
 };
 
 function inferStrategy(category, icp) {
-  if (CATEGORY_STRATEGY[category.id]) return CATEGORY_STRATEGY[category.id];
-  return {
+  const base = CATEGORY_STRATEGY[category.id] || {
     target_signals: [],
     avoid_signals: [],
     persona: `${icp.industries.slice(0,3).join('・')}の${icp.sizes.map(s=>({small:'小規模',mid:'中規模',large:'大規模'}[s])).join('・')}企業`,
     decision_maker: '経営者・部門長',
     motivation: icp.pains.join('・'),
     avoid: icp.anti_patterns.length ? '既存システム導入済み・カテゴリ競合あり' : '特になし',
+  };
+  // 12項目のデフォルト埋め
+  return {
+    budget_range: `小規模なら月数万円〜、中規模なら数十万円規模が標準的`,
+    meeting_time: '初回 15-30分（課題ヒアリング）、本商談 60分（提案・見積）',
+    objections: '①予算が無い・タイミングが悪い ②既存ベンダーとの契約継続 ③決裁が降りない ④効果が見えにくい',
+    differentiators: '①導入実績 ②価格・サポート品質 ③業種特化のノウハウ ④オンボーディングの早さ',
+    approach: '冒頭で「同業他社の課題解決例」を簡潔に提示 → 「御社では何が一番のネック?」と課題ヒアリング → 解決策を提案',
+    market_context: `${icp.industries[0]||'関連市場'}は人手不足・DX需要・コスト圧力の3軸で動いており、中小企業ほど課題が顕在化`,
+    key_questions: '①現状の運用方法 ②不便・課題に感じている点 ③予算・決裁ライン ④検討開始時期 ⑤判断基準',
+    timing: '期初（4月・10月）の予算消化期、組織変更・新拠点開設時、年度末の駆け込み',
+    ...base, // CATEGORY_STRATEGYに値があればこちらが優先
   };
 }
 
@@ -1619,12 +1638,37 @@ function generateFilteredQueries(productText, icp, filters, round = 0) {
   return [...new Set(queries.filter(q => q.trim()))].slice(0, 10);
 }
 
+const ARTICLE_KEYWORDS = [
+  'とは', '選び方', '比較', 'ランキング', 'おすすめ', 'まとめ',
+  '解説', '違い', 'メリット', 'デメリット', '徹底', '入門',
+  'ガイド', '初心者', '完全', '〜つ', '社ご紹介', '一覧',
+  '5選', '10選', '20選', '30選', '50選',
+  '人気', '評判', 'レビュー', '口コミ', 'クチコミ',
+];
+
+const NOISE_URL_PATTERNS = [
+  /\/blog(s)?\//, /\/article(s)?\//, /\/column(s)?\//, /\/news\//, /\/media\//,
+  /\/guide\//, /\/post(s)?\//, /\/ranking\//, /\/howto\//, /\/topics\//,
+  /\/magazine\//, /\/research\//, /\/whitepaper\//,
+];
+
+function looksLikeArticle(title, url, desc) {
+  const text = `${title || ''} ${desc || ''}`;
+  if (url && NOISE_URL_PATTERNS.some(re => re.test(url))) return true;
+  let count = 0;
+  for (const kw of ARTICLE_KEYWORDS) {
+    if (text.includes(kw)) count++;
+    if (count >= 2) return true;
+  }
+  // タイトルに法人格がなく、説明文にだけ会社名があるなら記事の可能性
+  if (/(おすすめ.{0,8}\d+|徹底.{0,5}比較|ランキング)/.test(title || '')) return true;
+  return false;
+}
+
 function isLikelyRealCompany(c) {
+  if (looksLikeArticle(c.name, c.source_url || c.website, c.description)) return false;
   const corpRe = /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人|宗教法人|協同組合|Inc\.?|Corp\.?|LLC|Co\.,?\s?Ltd|Group|Company)/i;
-  const hasCorpName = corpRe.test(c.name || '');
-  const hasPhone = !!c.phone;
-  const hasMeaningfulDesc = c.description && c.description.length > 30;
-  return hasCorpName || (hasPhone && hasMeaningfulDesc);
+  return corpRe.test(c.name || '');
 }
 function isExcludedDomain(url) {
   const d = rootDomain(url);
@@ -1740,6 +1784,8 @@ function parseCompanyFromResult(r, idx) {
   if (!url || isExcludedDomain(url)) return null;
   const title = (r.title || '').replace(/&amp;/g, '&').trim();
   const desc = (r.description || '').replace(/<[^>]+>/g, '').trim();
+  // 解説・記事・ランキングページは弾く
+  if (looksLikeArticle(title, url, desc)) return null;
   // 会社名抽出: 株式会社XX / XX株式会社 等のパターン優先
   const name = extractCompanyName(title, url);
   const phone = extractPhoneFromText(desc + ' ' + title);
@@ -2026,16 +2072,24 @@ async function aiAnalyzeProduct(productText) {
   },
   "strategy": {
     "persona": "理想顧客像を1〜2文で",
-    "decision_maker": "想定決裁者の肩書",
-    "motivation": "購入動機・価値訴求ポイント",
+    "decision_maker": "想定決裁者の肩書(具体名・部署)",
+    "motivation": "購入動機・価値訴求ポイント(2〜3個)",
     "avoid": "避けるべき対象企業の特徴",
+    "budget_range": "想定価格帯(月額・年額・初期費用など具体的に)",
+    "meeting_time": "初回・本商談の所要時間",
+    "objections": "主な反対理由を4〜5個",
+    "differentiators": "競合との差別化ポイント3〜4個",
+    "approach": "効果的なアプローチ手法(冒頭の切り出しから締めまで)",
+    "market_context": "市場・業界の現状トレンド",
+    "key_questions": "初回ヒアリングで聞くべき質問5個",
+    "timing": "提案のベストタイミング(月・季節・組織イベント)",
     "target_signals": ["has_office","has_factory","has_store","has_field_work","has_remote","has_24h","pain_recruitment","pain_efficiency","pain_cost","pain_compliance","pain_sales","pain_succession","pain_funding","pain_old_hp","pain_welfare" から該当を選択"],
     "avoid_signals": ["上記から避けるシグナルを選択"]
   }
 }
 
 JSON以外は出力しないでください。`;
-  const text = await callClaude({ system, prompt, max_tokens: 1500 });
+  const text = await callClaude({ system, prompt, max_tokens: 3000 });
   return extractJson(text);
 }
 
@@ -2216,24 +2270,28 @@ function renderStrategy(strategy, scored) {
   const display = document.getElementById('strategy-display');
   const highCount = scored.filter(c => c.score >= 70).length;
   const midCount = scored.filter(c => c.score >= 40 && c.score < 70).length;
+  const cards = [
+    { icon: '🎯', label: '想定ペルソナ', value: strategy.persona },
+    { icon: '👤', label: '想定決裁者', value: strategy.decision_maker },
+    { icon: '💡', label: '購入動機', value: strategy.motivation },
+    { icon: '🚫', label: '避けるべき対象', value: strategy.avoid, warn: true },
+    { icon: '💰', label: '想定予算帯', value: strategy.budget_range },
+    { icon: '⏰', label: '商談時間の目安', value: strategy.meeting_time },
+    { icon: '🤔', label: '主な反対理由', value: strategy.objections },
+    { icon: '✨', label: '差別化ポイント', value: strategy.differentiators },
+    { icon: '📞', label: '効果的なアプローチ', value: strategy.approach },
+    { icon: '📊', label: '市場・業界トレンド', value: strategy.market_context },
+    { icon: '📋', label: 'ヒアリング質問', value: strategy.key_questions },
+    { icon: '📅', label: 'ベストタイミング', value: strategy.timing },
+  ];
   display.innerHTML = `
     <div class="strategy-grid">
-      <div class="strategy-card">
-        <div class="label">🎯 想定ペルソナ</div>
-        <div>${strategy.persona}</div>
-      </div>
-      <div class="strategy-card">
-        <div class="label">👤 想定決裁者</div>
-        <div>${strategy.decision_maker}</div>
-      </div>
-      <div class="strategy-card">
-        <div class="label">💡 購入動機</div>
-        <div>${strategy.motivation}</div>
-      </div>
-      <div class="strategy-card warn">
-        <div class="label">🚫 避けるべき対象</div>
-        <div>${strategy.avoid}</div>
-      </div>
+      ${cards.map(c => `
+        <div class="strategy-card ${c.warn ? 'warn' : ''}">
+          <div class="label">${c.icon} ${c.label}</div>
+          <div>${c.value || '-'}</div>
+        </div>
+      `).join('')}
     </div>
     <div class="strategy-summary">
       <strong>分析結論：</strong>
@@ -2250,7 +2308,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513i');
+    const res = await fetch('data/companies.json?v=20260513j');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2518,7 +2576,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513i');
+      const res = await fetch('data/sample.json?v=20260513j');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
