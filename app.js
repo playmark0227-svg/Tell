@@ -2226,6 +2226,75 @@ JSON以外は出力しないでください。`;
   return extractJson(text);
 }
 
+async function aiScoreBatch(companies, productText) {
+  if (companies.length === 0) return [];
+  const sys = `あなたはB2B営業のシニアコンサルタントです。商材と複数の企業情報から、各企業がその商材を購入する適合度を厳しく評価してJSON配列のみで返答してください。`;
+  const list = companies.map((c, i) =>
+    `${i+1}. ${c.name} (${c.industry||'業種不明'} / ${c.prefecture||''}${c.city||''} / 従業員${c.employees||'?'}名): ${(c.description||'').slice(0,200)}`
+  ).join('\n');
+  const prompt = `商材: ${productText}
+
+以下${companies.length}社それぞれの購入適合度を0-100で厳しく評価:
+${list}
+
+評価基準:
+- 事業内容と商材の関連性
+- 想定される購入動機の強さ
+- 規模感の適合
+- 既存ベンダー導入の兆候があれば減点
+
+JSON配列のみ返答(他のテキスト不要):
+[{"i":1,"s":80,"r":"30文字以内の根拠"},{"i":2,"s":40,"r":"..."},...]`;
+  try {
+    const text = await callClaude({ system: sys, prompt, max_tokens: 2000 });
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) return null;
+    const arr = JSON.parse(m[0]);
+    return companies.map((_, idx) => {
+      const found = arr.find(x => x.i === idx + 1);
+      if (!found) return null;
+      return {
+        score: Math.max(0, Math.min(100, parseInt(found.s, 10) || 0)),
+        reasoning: String(found.r || '').slice(0, 80),
+      };
+    });
+  } catch (e) {
+    console.warn('aiScoreBatch failed', e);
+    return null;
+  }
+}
+
+async function batchScoreExisting(productText, onProgress) {
+  if (!productText || (!store.opts.aiKey && !store.opts.braveProxy)) return;
+  const all = getAllCompanies();
+  const needScoring = all.filter(c => typeof c.ai_score !== 'number');
+  if (needScoring.length === 0) return;
+  const BATCH = 10;
+  for (let i = 0; i < needScoring.length; i += BATCH) {
+    const batch = needScoring.slice(i, i + BATCH);
+    const end = Math.min(i + BATCH, needScoring.length);
+    onProgress?.(`既存企業を商材に対して再評価 ${i+1}-${end}/${needScoring.length}…`);
+    const results = await aiScoreBatch(batch, productText);
+    if (results) {
+      batch.forEach((c, j) => {
+        if (results[j]) {
+          c.ai_score = results[j].score;
+          c.ai_reasoning = results[j].reasoning;
+          c.ai_scored_for = productText.slice(0, 60);
+        }
+      });
+      saveStore();
+      // 部分的に再描画
+      const allC = getAllCompanies();
+      state.scored = allC
+        .map(co => scoreCompany(co, state.icp, state.strategy, state.intentSignals))
+        .sort((a, b) => b.score - a.score);
+      try { renderResults(); renderSidebar(); } catch (e) { console.warn('render error', e); }
+    }
+  }
+  onProgress?.(`✓ 既存${needScoring.length}社の再評価完了`);
+}
+
 async function aiScoreCompany(company, productText, hpText) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
   const sys = `あなたはB2B営業のシニアコンサルタントです。商材と企業情報から、その企業がその商材を購入する適合度を厳しく評価してください。JSONのみで返答。`;
@@ -2498,6 +2567,26 @@ async function runPipeline(input, options = {}) {
     progEl.textContent = '⚠ ウェブ検索が未設定。サイドバー「🌐 ウェブ検索」でCloudflare WorkerプロキシURLを登録してください';
   }
 
+  // 商材が変わっていれば既存企業のAI評価をクリア
+  if (discover) {
+    const key = input.slice(0, 60);
+    const refreshable = [...store.importedCompanies, ...store.customCompanies];
+    let cleared = 0;
+    for (const c of refreshable) {
+      if (c.ai_scored_for !== key && typeof c.ai_score === 'number') {
+        delete c.ai_score;
+        delete c.ai_reasoning;
+        delete c.ai_fit;
+        delete c.ai_scored_for;
+        cleared++;
+      }
+    }
+    if (cleared > 0) {
+      console.log(`商材変更により ${cleared} 社のAI評価をクリアして再評価対象に`);
+      saveStore();
+    }
+  }
+
   state.discoveryRound = 0;
   const allCompanies = getAllCompanies();
   state.scored = allCompanies
@@ -2513,6 +2602,12 @@ async function runPipeline(input, options = {}) {
   const moreEl = document.getElementById('discover-more-section');
   if (moreEl) {
     moreEl.hidden = !(store.opts.braveKey || store.opts.braveProxy);
+  }
+  // バックグラウンドで既存企業のAI再評価(時間かかるので画面更新は段階的)
+  if (discover) {
+    batchScoreExisting(input, msg => {
+      if (progEl) progEl.textContent = msg;
+    }).catch(e => console.warn('batch score failed', e));
   }
 }
 
