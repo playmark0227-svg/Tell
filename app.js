@@ -1816,12 +1816,45 @@ function isExcludedDomain(url) {
 }
 
 const PHONE_RE_JS = /(?<![0-9])(?:0(?:120|800|570)|0\d{1,3})[-(ー－（]?\d{1,4}[-)ー－）]?\d{3,4}(?![0-9])/g;
+const PHONE_HINT_RE = /(TEL|Tel|tel|電話|☎|代表電話|Phone|FAX|FAX番号)/;
+
+function normalizePhoneStr(s) {
+  return String(s).replace(/[ー－（）｜ーｰ]/g, c => ({'ー':'-','－':'-','（':'(','）':')'}[c]||c));
+}
+
+function isValidJapanesePhone(raw) {
+  const digits = String(raw).replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 11) return false;
+  if (!digits.startsWith('0')) return false;
+  // 携帯 070/080/090: 11桁
+  if (/^0[789]0/.test(digits) && digits.length !== 11) return false;
+  // 固定電話: 10桁
+  if (!/^0[789]0/.test(digits) && digits.length !== 10) return false;
+  return true;
+}
 
 function extractPhoneFromText(text) {
   if (!text) return '';
-  const matches = String(text).match(PHONE_RE_JS);
-  if (!matches) return '';
-  return matches[0].replace(/[ーｰ－（）]/g, c => ({'ー':'-','ｰ':'-','－':'-','（':'(','）':')'}[c]||c));
+  const str = String(text);
+  const matches = [...str.matchAll(PHONE_RE_JS)];
+  if (matches.length === 0) return '';
+
+  // ヒント付き(TEL/電話/☎の直後)の候補を優先
+  const hinted = [];
+  const plain = [];
+  for (const m of matches) {
+    const raw = m[0];
+    if (!isValidJapanesePhone(raw)) continue;
+    const idx = m.index;
+    const before = str.slice(Math.max(0, idx - 15), idx);
+    // 郵便番号や住所番地っぽいなら除外
+    if (/〒|郵便番号/.test(before)) continue;
+    if (/(丁目|番地|号|番|区|町|大字)\s*$/.test(before)) continue;
+    if (PHONE_HINT_RE.test(before)) hinted.push(raw);
+    else plain.push(raw);
+  }
+  const pick = hinted[0] || plain[0];
+  return pick ? normalizePhoneStr(pick) : '';
 }
 
 const _braveLastCall = { t: 0 };
@@ -2015,9 +2048,10 @@ function extractFromHTML(html, baseUrl) {
   }
   if (!out.name && candidates[0]) out.name = extractCompanyName(candidates[0], baseUrl);
 
-  // 電話番号
-  const phoneM = html.match(/(?<![0-9])(?:0(?:120|800|570)|0\d{1,3})[-(ー－（]?\d{1,4}[-)ー－）]?\d{3,4}(?![0-9])/);
-  if (phoneM) out.phone = phoneM[0].replace(/[ー－（）]/g, c => ({'ー':'-','－':'-','（':'(','）':')'}[c]));
+  // 電話番号(HTMLから抽出 - HTMLタグを除去してテキストに変換してから処理)
+  const flatText = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const extracted = extractPhoneFromText(flatText);
+  if (extracted) out.phone = extracted;
 
   // 問い合わせURL
   const contactM = html.match(/<a[^>]*\shref=["']([^"']+)["'][^>]*>[^<]{0,80}(?:contact|inquiry|toiawase|問い合わせ|問合せ|お問い合わせ)[^<]{0,80}<\/a>/i);
