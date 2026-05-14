@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260513g">
+<link rel="stylesheet" href="style.css?v=20260513h">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -293,6 +293,10 @@
 
   <section class="panel" id="filter-section" hidden>
     <h2>5. 絞り込み</h2>
+    <div class="action-row" style="margin-bottom:12px;">
+      <button id="refine-search-btn">🔍 この絞り込みでウェブを精密検索</button>
+    </div>
+    <div id="refine-progress" class="discovery-progress" hidden style="margin-bottom:12px;"></div>
     <div class="filters">
       <label>業種
         <select id="filter-industry"><option value="">すべて</option></select>
@@ -422,6 +426,6 @@
   </div>
 </div>
 
-<script src="app.js?v=20260513g"></script>
+<script src="app.js?v=20260513h"></script>
 </body>
 </html>

@@ -1598,6 +1598,34 @@ function rootDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); }
   catch { return ''; }
 }
+function generateFilteredQueries(productText, icp, filters, round = 0) {
+  const queries = [];
+  const { industry, prefecture, city } = filters || {};
+  const CORP_KWS = [
+    '株式会社 会社概要', '中小企業 会社概要', '採用情報 株式会社', '代表電話',
+    '会社案内 法人', '事業内容 株式会社',
+  ];
+  const targetIndustries = industry ? [industry] : (icp?.industries || []).slice(0, 4);
+  for (const ind of targetIndustries) {
+    const parts = [ind];
+    if (prefecture) parts.push(prefecture);
+    if (city && city !== prefecture) parts.push(city);
+    parts.push(CORP_KWS[round % CORP_KWS.length]);
+    queries.push(parts.join(' '));
+    if (prefecture || city) {
+      queries.push(`${ind} ${prefecture||''}${city ? ' ' + city : ''} 株式会社`.trim());
+    }
+  }
+  return [...new Set(queries.filter(q => q.trim()))].slice(0, 10);
+}
+
+function isLikelyRealCompany(c) {
+  const corpRe = /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人|宗教法人|協同組合|Inc\.?|Corp\.?|LLC|Co\.,?\s?Ltd|Group|Company)/i;
+  const hasCorpName = corpRe.test(c.name || '');
+  const hasPhone = !!c.phone;
+  const hasMeaningfulDesc = c.description && c.description.length > 30;
+  return hasCorpName || (hasPhone && hasMeaningfulDesc);
+}
 function isExcludedDomain(url) {
   const d = rootDomain(url);
   for (const ex of BRAVE_EXCLUDED_DOMAINS) {
@@ -1840,7 +1868,9 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   const round = options.round || 0;
   const maxQueries = options.maxQueries || 8;
   let queries;
-  if (round === 0 && store.opts.aiEnabled && store.opts.aiKey) {
+  if (options.queries && options.queries.length) {
+    queries = options.queries;
+  } else if (round === 0 && store.opts.aiEnabled && store.opts.aiKey) {
     queries = await aiGenerateQueries(productText, icp);
   } else {
     queries = generateQueriesFromICP(productText, icp, round);
@@ -1887,24 +1917,65 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   if (found.length > 0) {
     // HP訪問による情報補強(時間かかるが確実)
     if (store.opts.braveProxy) {
-      onProgress?.(`${found.length}社のHPを訪問して情報補強中…（時間かかります）`);
+      onProgress?.(`${found.length}社のHPを訪問して情報補強中（時間かかります）…`);
       for (let i = 0; i < found.length; i++) {
         const c = found[i];
         onProgress?.(`HP訪問 ${i+1}/${found.length}: ${c.name.slice(0,30)}`);
         try {
-          const enriched = await enrichCompany(c);
+          const enriched = await enrichCompanyDeep(c);
           Object.assign(c, enriched);
         } catch (e) {
           console.warn('enrich failed', c.website, e);
         }
       }
     }
-    store.importedCompanies.push(...found);
-    saveStore();
-    updateOnboarding();
+    // 法人らしさ検証フィルタ
+    const beforeValidate = found.length;
+    const validated = found.filter(isLikelyRealCompany);
+    const dropped = beforeValidate - validated.length;
+    if (validated.length > 0) {
+      store.importedCompanies.push(...validated);
+      saveStore();
+      updateOnboarding();
+    }
+    onProgress?.(`✓ ${validated.length}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${dropped}）`);
+    return validated;
   }
-  onProgress?.(`✓ ${found.length}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}）`);
-  return found;
+  onProgress?.(`✓ 0社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}）`);
+  return [];
+}
+
+async function enrichCompanyDeep(c) {
+  if (!c.website || !store.opts.braveProxy) return c;
+  const baseUrl = c.website.replace(/\/+$/, '');
+  const urls = [
+    c.website,
+    `${baseUrl}/company`,
+    `${baseUrl}/company/`,
+    `${baseUrl}/about`,
+    `${baseUrl}/about/`,
+    `${baseUrl}/corporate`,
+  ];
+  let best = { ...c };
+  for (const u of urls) {
+    const html = await fetchPageViaProxy(u);
+    if (!html) continue;
+    const ext = extractFromHTML(html, u);
+    if (!ext) continue;
+    // 法人格を含む名前が見つかったら上書き
+    if (ext.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(ext.name)) {
+      best.name = ext.name;
+    } else if (!best.name && ext.name) {
+      best.name = ext.name;
+    }
+    if (ext.phone && !best.phone) best.phone = ext.phone;
+    if (ext.contact_url && !best.contact_url) best.contact_url = ext.contact_url;
+    if (ext.prefecture && !best.prefecture) best.prefecture = ext.prefecture;
+    // 既に十分情報があれば早期終了
+    if (best.name && /(株式会社|合同会社|有限会社)/.test(best.name) && best.phone) break;
+  }
+  best.needs_enrichment = false;
+  return best;
 }
 
 function extractJson(text) {
@@ -2043,6 +2114,43 @@ async function runPipeline(input, options = {}) {
   }
 }
 
+async function refineSearch() {
+  if (!state.icp) { alert('先に商材を分析してください'); return; }
+  const filters = {
+    industry: document.getElementById('filter-industry').value,
+    prefecture: document.getElementById('filter-prefecture').value,
+    city: document.getElementById('filter-city').value.trim(),
+    size: document.getElementById('filter-size').value,
+  };
+  if (!filters.industry && !filters.prefecture && !filters.city) {
+    alert('業種・都道府県・市区町村のいずれかを指定してください');
+    return;
+  }
+  state.discoveryRound = (state.discoveryRound || 0) + 1;
+  const input = document.getElementById('product-input').value.trim();
+  const queries = generateFilteredQueries(input, state.icp, filters, state.discoveryRound);
+  const progEl = document.getElementById('refine-progress');
+  progEl.hidden = false;
+  progEl.classList.remove('done', 'error');
+  progEl.textContent = `絞り込み条件で再検索: ${queries.length}クエリ実行中…`;
+  try {
+    const found = await discoverFromBrave(input, state.icp, msg => {
+      progEl.textContent = msg;
+    }, { queries, maxQueries: 10 });
+    progEl.classList.add('done');
+    const allCompanies = getAllCompanies();
+    state.scored = allCompanies
+      .map(c => scoreCompany(c, state.icp, state.strategy, state.intentSignals))
+      .sort((a, b) => b.score - a.score);
+    renderFilters();
+    renderResults();
+    renderSidebar();
+  } catch (e) {
+    progEl.classList.add('error');
+    progEl.textContent = `失敗: ${e.message}`;
+  }
+}
+
 async function discoverMore(count) {
   if (!state.icp) { alert('先に商材を分析してください'); return; }
   state.discoveryRound = (state.discoveryRound || 0) + 1;
@@ -2121,7 +2229,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513g');
+    const res = await fetch('data/companies.json?v=20260513h');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2257,6 +2365,7 @@ async function init() {
 
   document.getElementById('discover-more-btn').addEventListener('click', () => discoverMore(5));
   document.getElementById('discover-more-many-btn').addEventListener('click', () => discoverMore(10));
+  document.getElementById('refine-search-btn').addEventListener('click', refineSearch);
 
   document.querySelectorAll('.sample-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2388,7 +2497,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513g');
+      const res = await fetch('data/sample.json?v=20260513h');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
