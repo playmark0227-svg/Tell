@@ -1748,6 +1748,7 @@ function parseCompanyFromResult(r, idx) {
     name: (name || rootDomain(url)).slice(0, 80),
     phone: phone || '',
     website: `https://${rootDomain(url)}`,
+    source_url: url,
     contact_url: '',
     industry: '',
     prefecture: '',
@@ -1888,91 +1889,111 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   const found = [];
   const stats = { totalResults: 0, excluded: 0, duped: 0 };
 
+  const rescore = () => {
+    const allCompanies = getAllCompanies();
+    state.scored = allCompanies
+      .map(co => scoreCompany(co, state.icp, state.strategy, state.intentSignals))
+      .sort((a, b) => b.score - a.score);
+    renderResults();
+    renderSidebar();
+  };
+
+  let totalValidated = 0;
   for (let qIdx = 0; qIdx < queries.length; qIdx++) {
     const q = queries[qIdx];
+    let queryCandidates = [];
     try {
       const results = await braveSearch(q, 10);
       stats.totalResults += results.length;
-      let added = 0;
       results.forEach((r, i) => {
         if (!r.url) { stats.excluded++; return; }
         if (isExcludedDomain(r.url)) { stats.excluded++; return; }
         const dom = rootDomain(r.url);
         if (seenDomains.has(dom)) { stats.duped++; return; }
         seenDomains.add(dom);
-        const c = parseCompanyFromResult(r, found.length);
+        const c = parseCompanyFromResult(r, found.length + queryCandidates.length);
         if (!c) { stats.excluded++; return; }
         const key = dedupKey(c);
         if (existingKeys.has(key)) { stats.duped++; return; }
         existingKeys.add(key);
-        found.push(c);
-        added++;
+        queryCandidates.push(c);
       });
-      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ ${results.length}件中 +${added}社（累計${found.length}社）`);
+      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ ${results.length}件中 ${queryCandidates.length}社候補。HP訪問で精査中…`);
     } catch (e) {
       console.warn('brave query failed:', q, e);
-      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ エラー: ${e.message.slice(0,50)}`);
+      onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ 検索エラー: ${e.message.slice(0,50)}`);
+      continue;
     }
-  }
-  if (found.length > 0) {
-    // HP訪問による情報補強(時間かかるが確実)
-    if (store.opts.braveProxy) {
-      onProgress?.(`${found.length}社のHPを訪問して情報補強中（時間かかります）…`);
-      for (let i = 0; i < found.length; i++) {
-        const c = found[i];
-        onProgress?.(`HP訪問 ${i+1}/${found.length}: ${c.name.slice(0,30)}`);
-        try {
-          const enriched = await enrichCompanyDeep(c);
-          Object.assign(c, enriched);
-        } catch (e) {
-          console.warn('enrich failed', c.website, e);
-        }
+    // 各候補をHP訪問→検証→即追加
+    for (let i = 0; i < queryCandidates.length; i++) {
+      const c = queryCandidates[i];
+      onProgress?.(`${qIdx+1}/${queries.length} | HP訪問 ${i+1}/${queryCandidates.length}: ${c.name.slice(0,30)} …`);
+      try {
+        const enriched = await enrichCompanyDeep(c);
+        Object.assign(c, enriched);
+      } catch (e) {
+        console.warn('enrich failed', c.website, e);
+      }
+      if (isLikelyRealCompany(c)) {
+        store.importedCompanies.push(c);
+        found.push(c);
+        totalValidated++;
+        saveStore();
+        updateOnboarding();
+        rescore();
+        onProgress?.(`✓ +${c.name.slice(0,30)} （累計${totalValidated}社）`);
+      } else {
+        onProgress?.(`× 非法人除外: ${c.name.slice(0,30)}`);
       }
     }
-    // 法人らしさ検証フィルタ
-    const beforeValidate = found.length;
-    const validated = found.filter(isLikelyRealCompany);
-    const dropped = beforeValidate - validated.length;
-    if (validated.length > 0) {
-      store.importedCompanies.push(...validated);
-      saveStore();
-      updateOnboarding();
-    }
-    onProgress?.(`✓ ${validated.length}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${dropped}）`);
-    return validated;
   }
-  onProgress?.(`✓ 0社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}）`);
-  return [];
+  onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
+  return found;
+}
+
+function queryCandidates_count(stats, _foundLen, validated) {
+  // 概算: 候補総数 - validated = 除外された候補数
+  return Math.max(0, stats.totalResults - stats.excluded - stats.duped - validated);
 }
 
 async function enrichCompanyDeep(c) {
   if (!c.website || !store.opts.braveProxy) return c;
   const baseUrl = c.website.replace(/\/+$/, '');
-  const urls = [
+  const urls = [];
+  if (c.source_url && c.source_url !== c.website) urls.push(c.source_url);
+  urls.push(
     c.website,
     `${baseUrl}/company`,
     `${baseUrl}/company/`,
     `${baseUrl}/about`,
     `${baseUrl}/about/`,
     `${baseUrl}/corporate`,
-  ];
+    `${baseUrl}/corporate/`,
+    `${baseUrl}/profile`,
+    `${baseUrl}/info`,
+    `${baseUrl}/会社概要`,
+    `${baseUrl}/company/profile`,
+    `${baseUrl}/company/outline`,
+  );
   let best = { ...c };
   for (const u of urls) {
     const html = await fetchPageViaProxy(u);
     if (!html) continue;
     const ext = extractFromHTML(html, u);
     if (!ext) continue;
-    // 法人格を含む名前が見つかったら上書き
-    if (ext.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(ext.name)) {
-      best.name = ext.name;
+    if (ext.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人)/.test(ext.name)) {
+      if (!best.name || !/(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人)/.test(best.name)) {
+        best.name = ext.name;
+      }
     } else if (!best.name && ext.name) {
       best.name = ext.name;
     }
     if (ext.phone && !best.phone) best.phone = ext.phone;
     if (ext.contact_url && !best.contact_url) best.contact_url = ext.contact_url;
     if (ext.prefecture && !best.prefecture) best.prefecture = ext.prefecture;
-    // 既に十分情報があれば早期終了
-    if (best.name && /(株式会社|合同会社|有限会社)/.test(best.name) && best.phone) break;
+    // 名前+電話+住所が揃ったら十分
+    if (best.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(best.name)
+        && best.phone && best.prefecture) break;
   }
   best.needs_enrichment = false;
   return best;
@@ -2229,7 +2250,7 @@ function renderStrategy(strategy, scored) {
 /* ============ Init ============ */
 async function init() {
   try {
-    const res = await fetch('data/companies.json?v=20260513h');
+    const res = await fetch('data/companies.json?v=20260513i');
     state.companies = await res.json();
   } catch (e) {
     console.warn('companies.json読み込み失敗:', e);
@@ -2497,7 +2518,7 @@ async function init() {
   document.getElementById('load-sample').addEventListener('click', async () => {
     if (!confirm('サンプル60社（架空データ）を読み込みます。よろしいですか？')) return;
     try {
-      const res = await fetch('data/sample.json?v=20260513h');
+      const res = await fetch('data/sample.json?v=20260513i');
       const data = await res.json();
       const existingKeys = new Set(
         [...store.importedCompanies, ...store.customCompanies, ...state.companies].map(dedupKey)
