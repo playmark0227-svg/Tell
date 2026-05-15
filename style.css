@@ -602,6 +602,21 @@ button.ghost { background: transparent; color: var(--text); border: 1px solid va
   flex-wrap: wrap;
 }
 
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.results-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.results-actions button { margin-top: 0; }
+
 button.small { font-size: 12px; padding: 6px 12px; }
 
 .region-btn {

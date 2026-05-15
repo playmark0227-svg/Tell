@@ -3304,6 +3304,10 @@ async function init() {
 
   document.getElementById('export-results').addEventListener('click', exportResults);
   document.getElementById('export-saved').addEventListener('click', exportSaved);
+  const eri = document.getElementById('export-results-inline');
+  if (eri) eri.addEventListener('click', exportResults);
+  const esi = document.getElementById('export-saved-inline');
+  if (esi) esi.addEventListener('click', exportSaved);
   document.getElementById('export-all').addEventListener('click', exportAll);
   document.getElementById('import-file').addEventListener('change', e => {
     if (e.target.files[0]) importJson(e.target.files[0]);
