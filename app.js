@@ -1518,12 +1518,20 @@ function applyFilters() {
     .filter(c => !industry || c.industry === industry)
     .filter(c => {
       if (!hasRegionFilter) return true;
-      if (prefs.has(c.prefecture)) return true; // 県全域選択にマッチ
-      if (cities.has(`${c.prefecture}/${c.city}`)) return true; // 個別市マッチ
-      // 緩いマッチ: 県名一致 + 都市名部分一致
+      // 県/市情報が空の企業は除外しない(HPから取得できなかった場合の救済)
+      if (!c.prefecture) return true;
+      if (prefs.has(c.prefecture)) return true;
+      if (cities.has(`${c.prefecture}/${c.city}`)) return true;
       for (const ck of cities) {
         const [p, ct] = ck.split('/');
         if (c.prefecture === p && (c.city || '').includes(ct)) return true;
+      }
+      // 説明文に選択地域名が含まれていれば許容
+      const desc = (c.description || '') + ' ' + (c.name || '');
+      for (const p of prefs) if (desc.includes(p)) return true;
+      for (const ck of cities) {
+        const ct = ck.split('/')[1];
+        if (ct && desc.includes(ct)) return true;
       }
       return false;
     })
@@ -1902,7 +1910,11 @@ function renderRegionChips() {
   }
   el.innerHTML = [
     ...prefs.map(p => `<span class="region-chip pref">${p}全域<button class="x" data-rm-pref="${p}">×</button></span>`),
-    ...cities.map(c => `<span class="region-chip">${c.split('/')[0]}<button class="x" data-rm-city="${c}">×</button></span>`),
+    ...cities.map(c => {
+      const parts = c.split('/');
+      const display = parts[1] || parts[0];
+      return `<span class="region-chip">${display}<button class="x" data-rm-city="${c}">×</button></span>`;
+    }),
   ].join('');
   el.querySelectorAll('[data-rm-pref]').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
@@ -2548,7 +2560,7 @@ async function aiScoreBatch(companies, productText) {
 ${list}
 
 各社について:
-1. 「is_company」: 実在する法人なら true。記事/ガイド/比較/ランキングページや、求人ポータルの集約ページ、「○○の求人」「○○の選び方」「○○とは」のような、企業ではないものは false。
+1. 「is_company」: HPを持つ実在の法人・店舗・事務所なら true(寛容に判定)。明らかに false にすべきは: ①「○○とは」「徹底比較」「ランキング」「選び方」等の解説/比較記事 ②求人ポータルや業者一覧サイト ③Wikipedia等の参考情報。少しでも企業らしい(法人名・電話・所在地のいずれかが明示されている)場合は true。
 2. 「name」: 正しい法人名(株式会社/合同会社/有限会社/医療法人等を含む)。タイトルからノイズを除去したクリーンな名前。法人名が判別できなければ null。
 3. 「s」: 適合度0-100。is_companyがfalseなら0でOK。
    - 80-100: 主力ターゲットに完全合致
@@ -2637,7 +2649,7 @@ async function aiScoreCompany(company, productText, hpText) {
 - HPテキスト抜粋: ${(hpText || '').slice(0, 1500)}
 
 判定項目:
-1. is_company: 日本の実在法人(株式会社/合同会社等)か。記事/ガイド/比較/ランキング/求人ポータル等の場合は false
+1. is_company: HPを持つ実在の法人/店舗/事務所なら true(寛容に判定)。明らかに false にすべきは ①「○○とは」「徹底比較」「ランキング」「選び方」等の解説/比較記事 ②求人ポータルや業者一覧サイト ③Wikipedia等の参考情報のみ
 2. name: クリーンな法人名。タイトルからノイズ除去、HPから正式な法人名が判明すれば優先
 3. score: 0-100の適合度(80+/60-79/40-59/20-39/0-19の目安)
 4. reasoning: 30字以内の根拠
