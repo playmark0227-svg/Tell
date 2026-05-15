@@ -1019,12 +1019,44 @@ function renderResults() {
   const filtered = applyFilters();
   const tbody = document.querySelector('#results-table tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(c => renderRow(c)).join('');
+  const total = state.scored.length;
+
+  if (filtered.length === 0 && total > 0) {
+    // フィルタで弾かれている → 案内+リセットボタン表示
+    const colCount = document.querySelectorAll('#results-table thead th').length || 9;
+    tbody.innerHTML = `
+      <tr><td colspan="${colCount}" style="text-align:center;padding:30px 12px;color:var(--muted);">
+        登録 ${total} 社中、現在のフィルタ条件に合致する企業が 0 件です。<br>
+        <button id="reset-filters-btn" class="ghost small" style="margin-top:10px;">🔄 フィルタをリセット</button>
+      </td></tr>`;
+    const rb = document.getElementById('reset-filters-btn');
+    if (rb) rb.addEventListener('click', () => {
+      ['filter-industry','filter-prefecture','filter-size'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      document.getElementById('filter-city').value = '';
+      const fs = document.getElementById('filter-score');
+      if (fs) { fs.value = '0'; document.getElementById('filter-score-value').textContent = '0'; }
+      document.getElementById('search-box').value = '';
+      state.view = 'all';
+      document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+      const allTab = document.querySelector('.view-tab[data-view="all"]');
+      if (allTab) allTab.classList.add('active');
+      renderResults();
+    });
+  } else {
+    tbody.innerHTML = filtered.map(c => renderRow(c)).join('');
+    bindRowActions();
+  }
   const countEl = document.getElementById('result-count');
-  if (countEl) countEl.textContent = `（${filtered.length}件）`;
+  if (countEl) {
+    countEl.textContent = total > 0 && filtered.length !== total
+      ? `（${filtered.length}件 / 登録${total}社中）`
+      : `（${filtered.length}件）`;
+  }
   const section = document.getElementById('results-section');
   if (section) section.hidden = false;
-  bindRowActions();
 }
 
 function renderRow(c) {
