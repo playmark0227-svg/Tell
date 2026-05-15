@@ -2775,6 +2775,9 @@ async function runPipeline(input, options = {}) {
   if (moreEl) {
     moreEl.hidden = !(store.opts.braveKey || store.opts.braveProxy);
   }
+  // 検索後は「同条件で追加検索」ボタンを表示
+  const refineBtn = document.getElementById('refine-search-btn');
+  if (refineBtn) refineBtn.hidden = false;
   // バックグラウンドで既存企業のAI再評価(時間かかるので画面更新は段階的)
   if (discover) {
     batchScoreExisting(input, msg => {

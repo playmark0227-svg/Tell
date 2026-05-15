@@ -242,119 +242,127 @@
     </div>
   </section>
 
-  <section class="panel">
-    <h2>1. 商材を入力</h2>
-    <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換えを想定"></textarea>
-    <div class="action-row">
-      <button id="analyze-btn">🌐 ウェブから企業を発見して分析</button>
-      <button id="chat-mode-btn" class="ghost">🤖 AIと対話して商材を設定</button>
-      <button id="analyze-existing-btn" class="ghost">登録済み企業のみ分析</button>
-    </div>
-    <div id="discovery-progress" class="discovery-progress" hidden></div>
-    <details class="samples-toggle">
-      <summary>クイックテンプレ（タップで入力欄に挿入）</summary>
-      <div class="samples">
-        <button class="sample-btn" data-sample="中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え">勤怠SaaS</button>
-        <button class="sample-btn" data-sample="法人向け新電力サービス、電気代を10%削減できる切り替え提案">新電力</button>
-        <button class="sample-btn" data-sample="クラウドPBXとIP電話、複数拠点を一本化、通信費削減">クラウドPBX</button>
-        <button class="sample-btn" data-sample="複合機リースとプリント保守、月額制で印刷コスト削減">複合機</button>
-        <button class="sample-btn" data-sample="法人向け生命保険、退職金準備と事業承継対策">法人保険</button>
-        <button class="sample-btn" data-sample="飲食店向けの業務用食材卸、配送つき">業務用食材</button>
-        <button class="sample-btn" data-sample="工場向け太陽光発電とPPA、初期費用ゼロで電気代削減・脱炭素">太陽光PPA</button>
-        <button class="sample-btn" data-sample="店舗向けPOSレジとキャッシュレス決済、Airレジ・Square連携">POSレジ</button>
-        <button class="sample-btn" data-sample="クラウドサイン型の電子契約、印紙代削減・リモート締結">電子契約</button>
-        <button class="sample-btn" data-sample="MEO対策と口コミ管理、Googleマイビジネス運用代行">MEO対策</button>
-        <button class="sample-btn" data-sample="Instagram・TikTokのSNS運用代行、ショート動画制作付き">SNS運用</button>
-        <button class="sample-btn" data-sample="売掛金ファクタリング、最短即日入金、銀行融資が難しい中小企業向け">ファクタリング</button>
-        <button class="sample-btn" data-sample="後継者不在の中小企業向けM&A仲介、事業承継支援">M&A仲介</button>
-        <button class="sample-btn" data-sample="法人向け防犯カメラとクラウド録画、AI顔認証で入退室管理も">防犯カメラ</button>
-        <button class="sample-btn" data-sample="バックオフィスのRPA導入支援、定型業務の自動化、UiPath代理店">RPA</button>
-        <button class="sample-btn" data-sample="ECサイト構築Shopify代理店、ネットショップ販路拡大支援">EC構築</button>
-        <button class="sample-btn" data-sample="法人向けカーリースと社用車管理、メンテナンス込み月額制">カーリース</button>
-        <button class="sample-btn" data-sample="生成AIチャットボットでカスタマーサポート自動化">AIチャット</button>
-        <button class="sample-btn" data-sample="法人向けウォーターサーバー、月額制、来客対応と従業員福利厚生向け">ウォーターサーバー</button>
-      </div>
-    </details>
-  </section>
+  <section class="panel setup-panel">
+    <h2>1. 検索設定</h2>
+    <p class="muted" style="margin-top:-8px;margin-bottom:14px;">商材と絞り込み条件をまとめて設定して、最後に1クリックで検索開始します。</p>
 
-  <section class="panel" id="filter-section">
-    <h2>2. ターゲット絞り込み <span class="muted">— 検索時もこの条件が反映されます</span></h2>
-    <div id="refine-progress" class="discovery-progress" hidden style="margin-bottom:12px;"></div>
-    <details class="samples-toggle" style="margin-bottom:12px;">
-      <summary>💬 LINE等のメッセージを貼り付けてAIで絞り込み条件を抽出</summary>
-      <div style="margin-top:8px;">
-        <textarea id="filter-text-input" rows="3" placeholder="例: 北海道苫小牧市の製造業で従業員50人以上の会社を探してほしい
-&#10;先方からのLINEメッセージや要件文をそのまま貼り付けOK"></textarea>
-        <button id="filter-text-apply" style="margin-top:6px;">🤖 AIで解析して条件を設定</button>
-        <div id="filter-text-status" class="empty" style="margin-top:6px;"></div>
+    <div class="setup-group">
+      <div class="setup-label">① 商材</div>
+      <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え"></textarea>
+      <div class="action-row" style="margin-top:8px;">
+        <button id="chat-mode-btn" class="ghost small">🤖 AIと対話して商材を詰める</button>
       </div>
-    </details>
-    <div class="action-row" style="margin-bottom:12px;">
-      <button id="refine-search-btn" class="ghost">🔍 この絞り込みでウェブを精密検索（追加発見）</button>
+      <details class="samples-toggle">
+        <summary>クイックテンプレを使う</summary>
+        <div class="samples">
+          <button class="sample-btn" data-sample="中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え">勤怠SaaS</button>
+          <button class="sample-btn" data-sample="法人向け新電力サービス、電気代を10%削減できる切り替え提案">新電力</button>
+          <button class="sample-btn" data-sample="クラウドPBXとIP電話、複数拠点を一本化、通信費削減">クラウドPBX</button>
+          <button class="sample-btn" data-sample="複合機リースとプリント保守、月額制で印刷コスト削減">複合機</button>
+          <button class="sample-btn" data-sample="法人向け生命保険、退職金準備と事業承継対策">法人保険</button>
+          <button class="sample-btn" data-sample="飲食店向けの業務用食材卸、配送つき">業務用食材</button>
+          <button class="sample-btn" data-sample="工場向け太陽光発電とPPA、初期費用ゼロで電気代削減・脱炭素">太陽光PPA</button>
+          <button class="sample-btn" data-sample="店舗向けPOSレジとキャッシュレス決済、Airレジ・Square連携">POSレジ</button>
+          <button class="sample-btn" data-sample="クラウドサイン型の電子契約、印紙代削減・リモート締結">電子契約</button>
+          <button class="sample-btn" data-sample="MEO対策と口コミ管理、Googleマイビジネス運用代行">MEO対策</button>
+          <button class="sample-btn" data-sample="Instagram・TikTokのSNS運用代行、ショート動画制作付き">SNS運用</button>
+          <button class="sample-btn" data-sample="売掛金ファクタリング、最短即日入金、銀行融資が難しい中小企業向け">ファクタリング</button>
+          <button class="sample-btn" data-sample="後継者不在の中小企業向けM&A仲介、事業承継支援">M&A仲介</button>
+          <button class="sample-btn" data-sample="法人向け防犯カメラとクラウド録画、AI顔認証で入退室管理も">防犯カメラ</button>
+          <button class="sample-btn" data-sample="バックオフィスのRPA導入支援、定型業務の自動化、UiPath代理店">RPA</button>
+          <button class="sample-btn" data-sample="ECサイト構築Shopify代理店、ネットショップ販路拡大支援">EC構築</button>
+          <button class="sample-btn" data-sample="法人向けカーリースと社用車管理、メンテナンス込み月額制">カーリース</button>
+          <button class="sample-btn" data-sample="生成AIチャットボットでカスタマーサポート自動化">AIチャット</button>
+          <button class="sample-btn" data-sample="法人向けウォーターサーバー、月額制、来客対応と従業員福利厚生向け">ウォーターサーバー</button>
+        </div>
+      </details>
     </div>
-    <div class="filters">
-      <label>業種
-        <select id="filter-industry">
-          <option value="">すべて</option>
-          <option>製造業</option>
-          <option>建設業</option>
-          <option>卸売・小売業</option>
-          <option>飲食業</option>
-          <option>運輸業</option>
-          <option>情報通信業</option>
-          <option>金融・保険業</option>
-          <option>不動産業</option>
-          <option>医療・福祉</option>
-          <option>教育・学習支援</option>
-          <option>宿泊・サービス業</option>
-          <option>サービス業</option>
-          <option>農林水産業</option>
-        </select>
-      </label>
-      <label>都道府県
-        <select id="filter-prefecture">
-          <option value="">すべて</option>
-          <option>北海道</option><option>青森県</option><option>岩手県</option><option>宮城県</option><option>秋田県</option><option>山形県</option><option>福島県</option>
-          <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
-          <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option><option>山梨県</option><option>長野県</option>
-          <option>岐阜県</option><option>静岡県</option><option>愛知県</option><option>三重県</option>
-          <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
-          <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
-          <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
-          <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option><option>沖縄県</option>
-        </select>
-      </label>
-      <label>市区町村
-        <input type="text" id="filter-city" list="city-options" placeholder="例: 苫小牧市">
-        <datalist id="city-options"></datalist>
-      </label>
-      <label>従業員規模
-        <select id="filter-size">
-          <option value="">すべて</option>
-          <option value="small">〜50名</option>
-          <option value="mid">51〜300名</option>
-          <option value="large">301名〜</option>
-        </select>
-      </label>
-      <label>最低スコア
-        <input type="range" id="filter-score" min="0" max="100" value="0">
-        <span id="filter-score-value">0</span>
-      </label>
+
+    <div class="setup-group" id="filter-section">
+      <div class="setup-label">② ターゲット絞り込み（任意）</div>
+      <details class="samples-toggle">
+        <summary>💬 LINE等のメッセージから条件を抽出</summary>
+        <div style="margin-top:8px;">
+          <textarea id="filter-text-input" rows="3" placeholder="例: 北海道苫小牧市の製造業で従業員50人以上の会社を探してほしい
+&#10;先方からのLINEメッセージや要件文をそのまま貼り付けOK"></textarea>
+          <button id="filter-text-apply" class="ghost small" style="margin-top:6px;">🤖 AIで解析して条件を設定</button>
+          <div id="filter-text-status" class="empty" style="margin-top:6px;"></div>
+        </div>
+      </details>
+      <div class="filters">
+        <label>業種
+          <select id="filter-industry">
+            <option value="">すべて</option>
+            <option>製造業</option>
+            <option>建設業</option>
+            <option>卸売・小売業</option>
+            <option>飲食業</option>
+            <option>運輸業</option>
+            <option>情報通信業</option>
+            <option>金融・保険業</option>
+            <option>不動産業</option>
+            <option>医療・福祉</option>
+            <option>教育・学習支援</option>
+            <option>宿泊・サービス業</option>
+            <option>サービス業</option>
+            <option>農林水産業</option>
+          </select>
+        </label>
+        <label>都道府県
+          <select id="filter-prefecture">
+            <option value="">すべて</option>
+            <option>北海道</option><option>青森県</option><option>岩手県</option><option>宮城県</option><option>秋田県</option><option>山形県</option><option>福島県</option>
+            <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
+            <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option><option>山梨県</option><option>長野県</option>
+            <option>岐阜県</option><option>静岡県</option><option>愛知県</option><option>三重県</option>
+            <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
+            <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
+            <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
+            <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option><option>沖縄県</option>
+          </select>
+        </label>
+        <label>市区町村
+          <input type="text" id="filter-city" list="city-options" placeholder="例: 苫小牧市">
+          <datalist id="city-options"></datalist>
+        </label>
+        <label>従業員規模
+          <select id="filter-size">
+            <option value="">すべて</option>
+            <option value="small">〜50名</option>
+            <option value="mid">51〜300名</option>
+            <option value="large">301名〜</option>
+          </select>
+        </label>
+        <label>最低スコア
+          <input type="range" id="filter-score" min="0" max="100" value="0">
+          <span id="filter-score-value">0</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="setup-group setup-cta">
+      <button id="analyze-btn" class="big-cta">🌐 検索開始（ウェブから企業を発見して分析）</button>
+      <div class="cta-sub">
+        <button id="analyze-existing-btn" class="ghost small">登録済み企業のみ再評価</button>
+        <button id="refine-search-btn" class="ghost small" hidden>🔍 同条件で追加検索</button>
+      </div>
+      <div id="discovery-progress" class="discovery-progress" hidden></div>
+      <div id="refine-progress" class="discovery-progress" hidden></div>
     </div>
   </section>
 
   <section class="panel" id="classification-section" hidden>
-    <h2>3. 商材判別</h2>
+    <h2>2. 商材判別</h2>
     <div id="classification-display"></div>
   </section>
 
   <section class="panel" id="strategy-section" hidden>
-    <h2>4. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
+    <h2>3. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
     <div id="strategy-display"></div>
   </section>
 
   <section class="panel" id="icp-section" hidden>
-    <h2>5. 理想顧客プロファイル（ICP）</h2>
+    <h2>4. 理想顧客プロファイル（ICP）</h2>
     <div id="icp-display"></div>
   </section>
 
@@ -369,7 +377,7 @@
   </section>
 
   <section class="panel" id="results-section" hidden>
-    <h2>6. 結果 <span id="result-count" class="muted"></span></h2>
+    <h2>5. 結果 <span id="result-count" class="muted"></span></h2>
     <div class="view-tabs" id="view-tabs">
       <button class="view-tab active" data-view="all">📋 全て</button>
       <button class="view-tab" data-view="with_phone">📞 電話あり</button>
