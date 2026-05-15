@@ -987,32 +987,15 @@ function renderICP(icp) {
 
 function renderFilters() {
   const industrySel = document.getElementById('filter-industry');
-  const prefSel = document.getElementById('filter-prefecture');
-  industrySel.innerHTML = '<option value="">すべて</option>';
-  prefSel.innerHTML = '<option value="">すべて</option>';
-  const all = getAllCompanies();
-  const industries = [...new Set(all.map(c => c.industry).filter(Boolean))].sort();
-  industrySel.insertAdjacentHTML('beforeend',
-    industries.map(i => `<option value="${i}">${i}</option>`).join(''));
-  const prefectures = [...new Set(all.map(c => c.prefecture).filter(Boolean))].sort();
-  prefSel.insertAdjacentHTML('beforeend',
-    prefectures.map(p => `<option value="${p}">${p}</option>`).join(''));
-  refreshCityDatalist();
-  document.getElementById('filter-section').hidden = false;
-}
-
-function refreshCityDatalist() {
-  const cityList = document.getElementById('city-options');
-  if (!cityList) return;
-  const pref = document.getElementById('filter-prefecture').value;
-  const all = getAllCompanies();
-  const cities = [...new Set(
-    all
-      .filter(c => !pref || c.prefecture === pref)
-      .map(c => c.city)
-      .filter(Boolean)
-  )].sort();
-  cityList.innerHTML = cities.map(c => `<option value="${c}">`).join('');
+  if (industrySel && industrySel.options.length <= 1) {
+    const all = getAllCompanies();
+    const industries = [...new Set(all.map(c => c.industry).filter(Boolean))].sort();
+    industrySel.insertAdjacentHTML('beforeend',
+      industries.map(i => `<option value="${i}">${i}</option>`).join(''));
+  }
+  const sec = document.getElementById('filter-section');
+  if (sec) sec.hidden = false;
+  renderRegionChips();
 }
 
 function renderResults() {
@@ -1031,14 +1014,18 @@ function renderResults() {
       </td></tr>`;
     const rb = document.getElementById('reset-filters-btn');
     if (rb) rb.addEventListener('click', () => {
-      ['filter-industry','filter-prefecture','filter-size'].forEach(id => {
+      ['filter-industry','filter-size'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
       });
-      document.getElementById('filter-city').value = '';
+      store.opts.regionPrefs = [];
+      store.opts.regionCities = [];
+      saveStore();
+      renderRegionChips();
       const fs = document.getElementById('filter-score');
       if (fs) { fs.value = '0'; document.getElementById('filter-score-value').textContent = '0'; }
-      document.getElementById('search-box').value = '';
+      const sb = document.getElementById('search-box');
+      if (sb) sb.value = '';
       state.view = 'all';
       document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
       const allTab = document.querySelector('.view-tab[data-view="all"]');
@@ -1139,7 +1126,7 @@ const store = {
   followUps: [],     // [{id, t}] next-callback queue
   profiles: [],      // [{id, name, productText, icp, strategy, classification, savedAt}]
   activeProfile: null,
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '' },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [] },
 };
 
 function loadStore() {
@@ -1520,16 +1507,26 @@ function loadProfile(id) {
 /* ============ Filter integration ============ */
 function applyFilters() {
   const industry = document.getElementById('filter-industry').value;
-  const prefecture = document.getElementById('filter-prefecture').value;
-  const city = document.getElementById('filter-city').value.trim();
   const size = document.getElementById('filter-size').value;
   const minScore = parseInt(document.getElementById('filter-score').value, 10);
   const search = document.getElementById('search-box').value.trim().toLowerCase();
+  const prefs = selectedPrefs();
+  const cities = selectedCities();
+  const hasRegionFilter = prefs.size > 0 || cities.size > 0;
 
   return state.scored
     .filter(c => !industry || c.industry === industry)
-    .filter(c => !prefecture || c.prefecture === prefecture)
-    .filter(c => !city || (c.city || '').includes(city))
+    .filter(c => {
+      if (!hasRegionFilter) return true;
+      if (prefs.has(c.prefecture)) return true; // 県全域選択にマッチ
+      if (cities.has(`${c.prefecture}/${c.city}`)) return true; // 個別市マッチ
+      // 緩いマッチ: 県名一致 + 都市名部分一致
+      for (const ck of cities) {
+        const [p, ct] = ck.split('/');
+        if (c.prefecture === p && (c.city || '').includes(ct)) return true;
+      }
+      return false;
+    })
     .filter(c => !size || c.size === size)
     .filter(c => c.score >= minScore)
     .filter(c => !store.opts.excludeDnc || !store.dnc.has(c.id))
@@ -1887,6 +1884,104 @@ function extractPhoneFromText(text) {
   }
   const pick = hinted[0] || plain[0];
   return pick ? normalizePhoneStr(pick) : '';
+}
+
+/* ============ 地域選択 ============ */
+function selectedPrefs() { return new Set(store.opts.regionPrefs || []); }
+function selectedCities() { return new Set(store.opts.regionCities || []); }
+
+function renderRegionChips() {
+  const el = document.getElementById('region-chips');
+  if (!el) return;
+  const prefs = [...selectedPrefs()];
+  const cities = [...selectedCities()];
+  const total = prefs.length + cities.length;
+  if (total === 0) {
+    el.innerHTML = '<span class="empty" style="font-size:11px;">未選択（全国対象）</span>';
+    return;
+  }
+  el.innerHTML = [
+    ...prefs.map(p => `<span class="region-chip pref">${p}全域<button class="x" data-rm-pref="${p}">×</button></span>`),
+    ...cities.map(c => `<span class="region-chip">${c.split('/')[0]}<button class="x" data-rm-city="${c}">×</button></span>`),
+  ].join('');
+  el.querySelectorAll('[data-rm-pref]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const p = b.dataset.rmPref;
+    store.opts.regionPrefs = (store.opts.regionPrefs || []).filter(x => x !== p);
+    saveStore(); renderRegionChips(); renderResults();
+  }));
+  el.querySelectorAll('[data-rm-city]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const c = b.dataset.rmCity;
+    store.opts.regionCities = (store.opts.regionCities || []).filter(x => x !== c);
+    saveStore(); renderRegionChips(); renderResults();
+  }));
+}
+
+function renderRegionTree() {
+  const treeEl = document.getElementById('region-tree');
+  if (!treeEl || !window.JAPAN_REGIONS) return;
+  const search = (document.getElementById('region-search').value || '').trim();
+  const prefsSet = selectedPrefs();
+  const citiesSet = selectedCities();
+  const html = Object.entries(window.JAPAN_REGIONS).map(([pref, cities]) => {
+    const allSel = prefsSet.has(pref);
+    const cityChips = cities.filter(c => !search || pref.includes(search) || c.includes(search)).map(c => {
+      const key = `${pref}/${c}`;
+      const sel = citiesSet.has(key);
+      return `<span class="region-city ${sel?'selected':''}" data-city-key="${key}">${c}</span>`;
+    }).join('');
+    if (search && !pref.includes(search) && cityChips === '') return '';
+    const openByDefault = search && (pref.includes(search) || cityChips !== '');
+    return `<div class="region-pref" data-pref="${pref}" data-open="${openByDefault?'true':'false'}">
+      <div class="region-pref-head">
+        <span class="toggle"></span>
+        <input type="checkbox" class="region-pref-checkbox" data-pref-check="${pref}" ${allSel?'checked':''}>
+        <span>${pref}</span>
+        <span class="count">${allSel?'全域選択中':`${cities.length}市区`}</span>
+      </div>
+      <div class="region-cities">${cityChips}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  treeEl.innerHTML = html;
+
+  treeEl.querySelectorAll('.region-pref-head').forEach(head => {
+    head.addEventListener('click', e => {
+      if (e.target.matches('input[type="checkbox"]')) return;
+      const p = head.parentElement;
+      p.dataset.open = p.dataset.open === 'true' ? 'false' : 'true';
+    });
+  });
+  treeEl.querySelectorAll('[data-pref-check]').forEach(cb => {
+    cb.addEventListener('click', e => e.stopPropagation());
+    cb.addEventListener('change', e => {
+      const p = cb.dataset.prefCheck;
+      const prefs = new Set(store.opts.regionPrefs || []);
+      if (cb.checked) prefs.add(p); else prefs.delete(p);
+      store.opts.regionPrefs = [...prefs];
+      // 県を選んだら個別市の選択は不要(全域扱い)
+      saveStore();
+      renderRegionTree();
+    });
+  });
+  treeEl.querySelectorAll('[data-city-key]').forEach(ch => {
+    ch.addEventListener('click', () => {
+      const key = ch.dataset.cityKey;
+      const cs = new Set(store.opts.regionCities || []);
+      if (cs.has(key)) cs.delete(key); else cs.add(key);
+      store.opts.regionCities = [...cs];
+      saveStore();
+      ch.classList.toggle('selected');
+    });
+  });
+}
+
+function openRegionModal() {
+  const modal = document.getElementById('region-modal');
+  if (!modal) return;
+  modal.hidden = false;
+  document.getElementById('region-search').value = '';
+  renderRegionTree();
 }
 
 const _braveLastCall = { t: 0 };
@@ -2375,14 +2470,20 @@ JSON object のみ返答(配列禁止、コメント禁止):
       const opt = [...sel.options].find(o => o.value === f.industry || o.text === f.industry);
       if (opt) { sel.value = opt.value; applied.push(`業種=${f.industry}`); }
     }
-    if (f.prefecture) {
-      const sel = document.getElementById('filter-prefecture');
-      const opt = [...sel.options].find(o => o.value === f.prefecture || o.text === f.prefecture);
-      if (opt) { sel.value = opt.value; applied.push(`都道府県=${f.prefecture}`); }
+    if (f.prefecture && window.JAPAN_REGIONS && window.JAPAN_REGIONS[f.prefecture]) {
+      const prefs = new Set(store.opts.regionPrefs || []);
+      prefs.add(f.prefecture);
+      store.opts.regionPrefs = [...prefs];
+      applied.push(`都道府県=${f.prefecture}全域`);
     }
-    if (f.city) {
-      document.getElementById('filter-city').value = f.city;
-      applied.push(`市区町村=${f.city}`);
+    if (f.city && f.prefecture && window.JAPAN_REGIONS && window.JAPAN_REGIONS[f.prefecture]) {
+      const match = window.JAPAN_REGIONS[f.prefecture].find(c => c === f.city || c.includes(f.city));
+      if (match) {
+        const cities = new Set(store.opts.regionCities || []);
+        cities.add(`${f.prefecture}/${match}`);
+        store.opts.regionCities = [...cities];
+        applied.push(`市区町村=${match}`);
+      }
     }
     if (f.size && ['small','mid','large'].includes(f.size)) {
       document.getElementById('filter-size').value = f.size;
@@ -2401,6 +2502,8 @@ JSON object のみ返答(配列禁止、コメント禁止):
     }
     statusEl.textContent = applied.length > 0 ? `✓ 適用: ${applied.join(' / ')}` : '抽出条件なし';
     statusEl.style.color = applied.length > 0 ? 'var(--good)' : 'var(--mid)';
+    saveStore();
+    renderRegionChips();
     if (state.scored.length > 0) renderResults();
   } catch (e) {
     console.error('applyFilterFromText error', e);
@@ -2743,15 +2846,19 @@ async function runPipeline(input, options = {}) {
   if (discover && (store.opts.braveKey || store.opts.braveProxy)) {
     progEl.hidden = false;
     progEl.classList.remove('done', 'error');
-    // 絞り込み条件を取得→クエリに反映
+    // 絞り込み条件を取得→クエリに反映(地域選択優先)
+    const prefList = [...selectedPrefs()];
+    const cityList = [...selectedCities()];
+    const firstPref = prefList[0] || (cityList[0] || '').split('/')[0] || '';
+    const firstCity = (cityList[0] || '').split('/')[1] || '';
     const preFilters = {
       industry: document.getElementById('filter-industry').value,
-      prefecture: document.getElementById('filter-prefecture').value,
-      city: document.getElementById('filter-city').value.trim(),
+      prefecture: firstPref,
+      city: firstCity,
     };
-    const hasPreFilter = preFilters.industry || preFilters.prefecture || preFilters.city;
+    const hasPreFilter = preFilters.industry || prefList.length > 0 || cityList.length > 0;
     progEl.textContent = hasPreFilter
-      ? `絞り込み条件(${[preFilters.industry, preFilters.prefecture, preFilters.city].filter(Boolean).join('・')})で検索中…`
+      ? `絞り込み条件(${[preFilters.industry, prefList.length>0?prefList.join('・')+'全域':'', cityList.length>0?cityList.length+'市区':''].filter(Boolean).join('・')})で検索中…`
       : '商材を分析してターゲット企業を検索中…';
     const customQueries = hasPreFilter ? generateFilteredQueries(input, state.icp, preFilters, 0) : null;
     try {
@@ -2820,14 +2927,18 @@ async function runPipeline(input, options = {}) {
 
 async function refineSearch() {
   if (!state.icp) { alert('先に商材を分析してください'); return; }
+  const prefList = [...selectedPrefs()];
+  const cityList = [...selectedCities()];
+  const firstPref = prefList[0] || (cityList[0] || '').split('/')[0] || '';
+  const firstCity = (cityList[0] || '').split('/')[1] || '';
   const filters = {
     industry: document.getElementById('filter-industry').value,
-    prefecture: document.getElementById('filter-prefecture').value,
-    city: document.getElementById('filter-city').value.trim(),
+    prefecture: firstPref,
+    city: firstCity,
     size: document.getElementById('filter-size').value,
   };
   if (!filters.industry && !filters.prefecture && !filters.city) {
-    alert('業種・都道府県・市区町村のいずれかを指定してください');
+    alert('業種・地域のいずれかを指定してください');
     return;
   }
   state.discoveryRound = (state.discoveryRound || 0) + 1;
@@ -3107,16 +3218,38 @@ async function init() {
     });
   });
 
-  ['filter-industry', 'filter-prefecture', 'filter-size'].forEach(id => {
-    document.getElementById(id).addEventListener('change', () => {
-      if (id === 'filter-prefecture') {
-        document.getElementById('filter-city').value = '';
-        refreshCityDatalist();
-      }
-      renderResults();
-    });
+  ['filter-industry', 'filter-size'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', renderResults);
   });
-  document.getElementById('filter-city').addEventListener('input', renderResults);
+
+  // 地域選択モーダル
+  const rsBtn = document.getElementById('region-select-btn');
+  if (rsBtn) rsBtn.addEventListener('click', openRegionModal);
+  const regionSearch = document.getElementById('region-search');
+  if (regionSearch) regionSearch.addEventListener('input', renderRegionTree);
+  const regionClear = document.getElementById('region-clear-all');
+  if (regionClear) regionClear.addEventListener('click', () => {
+    store.opts.regionPrefs = [];
+    store.opts.regionCities = [];
+    saveStore();
+    renderRegionTree();
+  });
+  const regionApply = document.getElementById('region-apply');
+  if (regionApply) regionApply.addEventListener('click', () => {
+    document.getElementById('region-modal').hidden = true;
+    renderRegionChips();
+    if (state.scored.length > 0) renderResults();
+  });
+  const regionCancel = document.getElementById('region-cancel');
+  if (regionCancel) regionCancel.addEventListener('click', () => {
+    document.getElementById('region-modal').hidden = true;
+  });
+  const regionModal = document.getElementById('region-modal');
+  if (regionModal) regionModal.addEventListener('click', e => {
+    if (e.target.id === 'region-modal') e.target.hidden = true;
+  });
+  renderRegionChips();
 
   document.querySelectorAll('.view-tab').forEach(tab => {
     tab.addEventListener('click', () => {
