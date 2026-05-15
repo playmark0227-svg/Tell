@@ -2867,11 +2867,13 @@ function renderStrategy(strategy, scored) {
   const display = document.getElementById('strategy-display');
   const highCount = scored.filter(c => c.score >= 70).length;
   const midCount = scored.filter(c => c.score >= 40 && c.score < 70).length;
-  const cards = [
+  const primary = [
     { icon: '🎯', label: '想定ペルソナ', value: strategy.persona },
     { icon: '👤', label: '想定決裁者', value: strategy.decision_maker },
     { icon: '💡', label: '購入動機', value: strategy.motivation },
     { icon: '🚫', label: '避けるべき対象', value: strategy.avoid, warn: true },
+  ];
+  const secondary = [
     { icon: '💰', label: '想定予算帯', value: strategy.budget_range },
     { icon: '⏰', label: '商談時間の目安', value: strategy.meeting_time },
     { icon: '🤔', label: '主な反対理由', value: strategy.objections },
@@ -2881,15 +2883,17 @@ function renderStrategy(strategy, scored) {
     { icon: '📋', label: 'ヒアリング質問', value: strategy.key_questions },
     { icon: '📅', label: 'ベストタイミング', value: strategy.timing },
   ];
+  const renderCard = c => `
+    <div class="strategy-card ${c.warn ? 'warn' : ''}">
+      <div class="label">${c.icon} ${c.label}</div>
+      <div>${c.value || '-'}</div>
+    </div>`;
   display.innerHTML = `
-    <div class="strategy-grid">
-      ${cards.map(c => `
-        <div class="strategy-card ${c.warn ? 'warn' : ''}">
-          <div class="label">${c.icon} ${c.label}</div>
-          <div>${c.value || '-'}</div>
-        </div>
-      `).join('')}
-    </div>
+    <div class="strategy-grid">${primary.map(renderCard).join('')}</div>
+    <details class="strategy-details">
+      <summary>📖 詳細を見る（予算帯・反対理由・アプローチ等の8項目）</summary>
+      <div class="strategy-grid" style="margin-top:12px;">${secondary.map(renderCard).join('')}</div>
+    </details>
     <div class="strategy-summary">
       <strong>分析結論：</strong>
       ${highCount > 0
