@@ -18,6 +18,7 @@ const state = {
   scored: [],
   discoveryRound: 0,
   view: 'all', // all | with_phone | without_phone | saved
+  continuousSearch: false,
 };
 
 function getCompanyUrls(c) {
@@ -2291,7 +2292,7 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
     let processed = 0;
     const total = queryCandidates.length;
     const worker = async () => {
-      while (cursor < total) {
+      while (cursor < total && !state.searchAborted) {
         const i = cursor++;
         const c = queryCandidates[i];
         onProgress?.(`${qIdx+1}/${queries.length} | ${processed+1}-${Math.min(processed+WORKERS, total)}/${total} 評価中…`);
@@ -3221,7 +3222,40 @@ async function init() {
   document.getElementById('analyze-btn').addEventListener('click', async () => {
     const input = document.getElementById('product-input').value.trim();
     if (!input) { alert('商材を入力してください'); return; }
-    await runPipeline(input, { discover: true });
+    if (state.continuousSearch) {
+      // 既に検索中 → 停止
+      state.continuousSearch = false;
+      state.searchAborted = true;
+      return;
+    }
+    state.continuousSearch = true;
+    state.searchAborted = false;
+    const btn = document.getElementById('analyze-btn');
+    const origText = btn.textContent;
+    const updateBtn = () => {
+      const total = getAllCompanies().length;
+      btn.innerHTML = `⏸ 検索を停止（累計 ${total} 社・継続中…）`;
+    };
+    btn.classList.add('searching');
+    updateBtn();
+    const tick = setInterval(updateBtn, 2000);
+    try {
+      // 初回検索
+      await runPipeline(input, { discover: true });
+      // 連続検索ループ: 停止されるまでラウンドを進めて発見
+      while (state.continuousSearch) {
+        await new Promise(r => setTimeout(r, 3000));
+        if (!state.continuousSearch) break;
+        await discoverMore(10);
+      }
+    } catch (e) {
+      console.error('continuous search error:', e);
+    } finally {
+      clearInterval(tick);
+      state.continuousSearch = false;
+      btn.classList.remove('searching');
+      btn.textContent = origText;
+    }
   });
   document.getElementById('analyze-existing-btn').addEventListener('click', async () => {
     const input = document.getElementById('product-input').value.trim();

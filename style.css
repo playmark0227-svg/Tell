@@ -593,6 +593,18 @@ button.ghost { background: transparent; color: var(--text); border: 1px solid va
   transform: translateY(-1px);
 }
 .big-cta:active { transform: translateY(1px); }
+.big-cta.searching {
+  background: linear-gradient(135deg, #dc2626, #991b1b);
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.3);
+  animation: searchPulse 2s ease-in-out infinite;
+}
+.big-cta.searching:hover {
+  background: linear-gradient(135deg, #991b1b, #7f1d1d);
+}
+@keyframes searchPulse {
+  0%, 100% { box-shadow: 0 4px 14px rgba(220, 38, 38, 0.3); }
+  50% { box-shadow: 0 6px 22px rgba(220, 38, 38, 0.55); }
+}
 
 .cta-sub {
   display: flex;
