@@ -2246,7 +2246,8 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ 検索エラー: ${e.message.slice(0,50)}`);
       continue;
     }
-    // 1件ずつ: 候補化→即リストに追加(pending)→ブラウザ描画→HP訪問→AI評価→確定 or 削除
+    // 候補を全部リストに即追加(pending) → 並列ワーカー(3社同時)でHP訪問・AI評価
+    const queryCandidates = [];
     for (let ri = 0; ri < rawResults.length; ri++) {
       const r = rawResults[ri];
       if (!r.url) { stats.excluded++; continue; }
@@ -2259,45 +2260,55 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       const key = dedupKey(c);
       if (existingKeys.has(key)) { stats.duped++; continue; }
       existingKeys.add(key);
-
-      // 即「評価中」状態でリストに追加
       c.pending = true;
       c.score = 50;
       c.reasoning = '🔍 HP訪問・AI評価中…';
       c.aiComment = '🔍 評価中…';
-      store.importedCompanies.push(c);
-      saveStore();
-      updateOnboarding();
-      rescore();
-      onProgress?.(`${qIdx+1}/${queries.length} | ${ri+1}/${rawResults.length} 候補追加: ${c.name.slice(0,30)} → 評価中…`);
-
-      // ブラウザに描画させる時間を与える (実体感の演出も兼ねる)
-      await new Promise(res => setTimeout(res, 50));
-
-      // HP訪問→AI評価
-      try {
-        const enriched = await enrichCompanyDeep(c, productText);
-        Object.assign(c, enriched);
-      } catch (e) {
-        console.warn('enrich failed', c.website, e);
-      }
-      c.pending = false;
-      const aiSaysNotCompany = c.ai_is_company === false;
-      const passesRule = !aiSaysNotCompany && isLikelyRealCompany(c);
-      if (passesRule) {
-        found.push(c);
-        totalValidated++;
-        saveStore();
-        rescore();
-        onProgress?.(`✓ ${c.name.slice(0,30)} 評価完了 (累計${totalValidated}社)`);
-      } else {
-        store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
-        saveStore();
-        rescore();
-        const reason = aiSaysNotCompany ? 'AI判定で非法人' : '非法人';
-        onProgress?.(`× ${c.name.slice(0,30)} ${reason}として除外`);
-      }
+      queryCandidates.push(c);
     }
+    if (queryCandidates.length === 0) continue;
+    store.importedCompanies.push(...queryCandidates);
+    saveStore();
+    updateOnboarding();
+    rescore();
+    onProgress?.(`${qIdx+1}/${queries.length}: ${queryCandidates.length}社を「評価中」で追加(3社並列で精査開始)`);
+
+    // 3社並列ワーカー
+    const WORKERS = 3;
+    let cursor = 0;
+    let processed = 0;
+    const total = queryCandidates.length;
+    const worker = async () => {
+      while (cursor < total) {
+        const i = cursor++;
+        const c = queryCandidates[i];
+        onProgress?.(`${qIdx+1}/${queries.length} | ${processed+1}-${Math.min(processed+WORKERS, total)}/${total} 評価中…`);
+        try {
+          const enriched = await enrichCompanyDeep(c, productText);
+          Object.assign(c, enriched);
+        } catch (e) {
+          console.warn('enrich failed', c.website, e);
+        }
+        c.pending = false;
+        const aiSaysNotCompany = c.ai_is_company === false;
+        const passesRule = !aiSaysNotCompany && isLikelyRealCompany(c);
+        if (passesRule) {
+          found.push(c);
+          totalValidated++;
+          saveStore();
+          rescore();
+          onProgress?.(`✓ ${c.name.slice(0,30)} 評価完了 (累計${totalValidated}社)`);
+        } else {
+          store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
+          saveStore();
+          rescore();
+          const reason = aiSaysNotCompany ? 'AI判定で非法人' : '非法人';
+          onProgress?.(`× ${c.name.slice(0,30)} ${reason}として除外`);
+        }
+        processed++;
+      }
+    };
+    await Promise.all(Array.from({ length: WORKERS }, worker));
   }
   onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
   return found;
@@ -2324,13 +2335,16 @@ function htmlToText(html) {
 async function enrichCompanyDeep(c, productText) {
   if (!c.website || !store.opts.braveProxy) return c;
   const baseUrl = c.website.replace(/\/+$/, '');
-  const urls = [];
-  if (c.source_url && c.source_url !== c.website) urls.push(c.source_url);
-  urls.push(
+  // 優先度高: 検索ヒットURL + ルート + /company + /about (4並列)
+  const priorityUrls = [
+    c.source_url && c.source_url !== c.website ? c.source_url : null,
     c.website,
     `${baseUrl}/company`,
-    `${baseUrl}/company/`,
     `${baseUrl}/about`,
+  ].filter(Boolean);
+  // 優先度低: その他のcompany系パス (まとめて並列)
+  const secondaryUrls = [
+    `${baseUrl}/company/`,
     `${baseUrl}/about/`,
     `${baseUrl}/corporate`,
     `${baseUrl}/corporate/`,
@@ -2339,15 +2353,15 @@ async function enrichCompanyDeep(c, productText) {
     `${baseUrl}/会社概要`,
     `${baseUrl}/company/profile`,
     `${baseUrl}/company/outline`,
-  );
+  ];
+
   let best = { ...c };
   const collectedTexts = [];
-  for (const u of urls) {
-    const html = await fetchPageViaProxy(u);
-    if (!html) continue;
+  const mergeFromHTML = (html, url) => {
+    if (!html) return;
     collectedTexts.push(htmlToText(html).slice(0, 2000));
-    const ext = extractFromHTML(html, u);
-    if (!ext) continue;
+    const ext = extractFromHTML(html, url);
+    if (!ext) return;
     if (ext.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人)/.test(ext.name)) {
       if (!best.name || !/(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人)/.test(best.name)) {
         best.name = ext.name;
@@ -2358,9 +2372,19 @@ async function enrichCompanyDeep(c, productText) {
     if (ext.phone && !best.phone) best.phone = ext.phone;
     if (ext.contact_url && !best.contact_url) best.contact_url = ext.contact_url;
     if (ext.prefecture && !best.prefecture) best.prefecture = ext.prefecture;
-    if (best.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(best.name)
-        && best.phone && best.prefecture) break;
+  };
+  const enough = () => best.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(best.name) && best.phone && best.prefecture;
+
+  // Phase1: 優先4URLを並列フェッチ
+  const phase1 = await Promise.all(priorityUrls.map(u => fetchPageViaProxy(u).catch(() => null)));
+  phase1.forEach((html, i) => mergeFromHTML(html, priorityUrls[i]));
+
+  // Phase2: 必要なら残りも並列フェッチ
+  if (!enough()) {
+    const phase2 = await Promise.all(secondaryUrls.map(u => fetchPageViaProxy(u).catch(() => null)));
+    phase2.forEach((html, i) => mergeFromHTML(html, secondaryUrls[i]));
   }
+
   best.needs_enrichment = false;
 
   // AI評価(時間かかるが精度高い)
