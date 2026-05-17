@@ -1150,7 +1150,25 @@ function loadStore() {
   } catch (e) { console.warn('loadStore failed', e); }
 }
 
+// 連続検索中など、saveStore() が高頻度で呼ばれるとlocalStorage書込が重いので
+// 500ms にまとめる
+let _saveStoreTimer = null;
+let _saveStoreDirty = false;
 function saveStore() {
+  // 即時保存(明示的)。検索ホットループでは saveStoreSoon() を使うとよい
+  _saveStoreDirty = false;
+  if (_saveStoreTimer) { clearTimeout(_saveStoreTimer); _saveStoreTimer = null; }
+  _saveStoreImpl();
+}
+function saveStoreSoon() {
+  _saveStoreDirty = true;
+  if (_saveStoreTimer) return;
+  _saveStoreTimer = setTimeout(() => {
+    _saveStoreTimer = null;
+    if (_saveStoreDirty) { _saveStoreDirty = false; _saveStoreImpl(); }
+  }, 500);
+}
+function _saveStoreImpl() {
   const d = {
     saved: [...store.saved],
     dnc: [...store.dnc],
@@ -2233,7 +2251,7 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   const found = [];
   const stats = { totalResults: 0, excluded: 0, duped: 0 };
 
-  const rescore = () => {
+  const rescoreImpl = () => {
     try {
       const allCompanies = getAllCompanies();
       state.scored = allCompanies
@@ -2245,13 +2263,30 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       console.error('rescore error:', err);
     }
   };
+  // 3並列ワーカーから同時に呼ばれるので、最大2回/秒に間引いてDOM再描画コストを抑制
+  let _rescoreTimer = null;
+  let _rescoreDirty = false;
+  const rescore = () => {
+    _rescoreDirty = true;
+    if (_rescoreTimer) return;
+    _rescoreTimer = setTimeout(() => {
+      _rescoreTimer = null;
+      if (_rescoreDirty) { _rescoreDirty = false; rescoreImpl(); }
+    }, 500);
+  };
+  const rescoreFlush = () => {
+    if (_rescoreTimer) { clearTimeout(_rescoreTimer); _rescoreTimer = null; }
+    if (_rescoreDirty) { _rescoreDirty = false; rescoreImpl(); }
+  };
 
   let totalValidated = 0;
   for (let qIdx = 0; qIdx < queries.length; qIdx++) {
     const q = queries[qIdx];
     let rawResults = [];
     try {
-      rawResults = await braveSearch(q, 20);
+      // ハローワーク特化モード時は site:制約を付与
+      const sitePrefix = window.HELLOWORK_MODE ? 'site:hellowork.mhlw.go.jp ' : '';
+      rawResults = await braveSearch(`${sitePrefix}${q}`, 20);
       stats.totalResults += rawResults.length;
       onProgress?.(`${qIdx+1}/${queries.length}「${q.slice(0,18)}」→ ${rawResults.length}件取得、1件ずつ精査`);
     } catch (e) {
@@ -2308,12 +2343,12 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         if (passesRule) {
           found.push(c);
           totalValidated++;
-          saveStore();
+          saveStoreSoon();
           rescore();
           onProgress?.(`✓ ${c.name.slice(0,30)} 評価完了 (累計${totalValidated}社)`);
         } else {
           store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
-          saveStore();
+          saveStoreSoon();
           rescore();
           const reason = aiSaysNotCompany ? 'AI判定で非法人' : '非法人';
           onProgress?.(`× ${c.name.slice(0,30)} ${reason}として除外`);
@@ -2322,7 +2357,11 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       }
     };
     await Promise.all(Array.from({ length: WORKERS }, worker));
+    rescoreFlush();
+    saveStore();
   }
+  rescoreFlush();
+  saveStore();
   onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
   return found;
 }
