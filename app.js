@@ -2339,18 +2339,22 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         }
         c.pending = false;
         const aiSaysNotCompany = c.ai_is_company === false;
-        const passesRule = !aiSaysNotCompany && isLikelyRealCompany(c);
+        const aiSaysNameInvalid = c.ai_name_valid === false;
+        const passesRule = !aiSaysNotCompany && !aiSaysNameInvalid && isLikelyRealCompany(c);
         if (passesRule) {
           found.push(c);
           totalValidated++;
           saveStoreSoon();
           rescore();
-          onProgress?.(`✓ ${c.name.slice(0,30)} 評価完了 (累計${totalValidated}社)`);
+          const phoneTag = c.phone ? ` ☎${c.phone}` : ' ☎未取得';
+          onProgress?.(`✓ ${c.name.slice(0,30)}${phoneTag} (累計${totalValidated}社)`);
         } else {
           store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
           saveStoreSoon();
           rescore();
-          const reason = aiSaysNotCompany ? 'AI判定で非法人' : '非法人';
+          const reason = aiSaysNotCompany ? 'AI判定で非法人'
+            : aiSaysNameInvalid ? 'AI判定で会社名が無効'
+            : '非法人';
           onProgress?.(`× ${c.name.slice(0,30)} ${reason}として除外`);
         }
         processed++;
@@ -2439,7 +2443,7 @@ async function enrichCompanyDeep(c, productText) {
 
   best.needs_enrichment = false;
 
-  // AI評価(時間かかるが精度高い)
+  // AI評価(時間かかるが精度高い) - 会社名と電話番号のT/F判定もここで実施
   if (productText && (store.opts.aiKey || store.opts.braveProxy) && collectedTexts.length > 0) {
     const hpText = collectedTexts.join('\n').slice(0, 3500);
     const ai = await aiScoreCompany(best, productText, hpText);
@@ -2448,8 +2452,20 @@ async function enrichCompanyDeep(c, productText) {
       best.ai_reasoning = ai.reasoning;
       best.ai_fit = ai.fit;
       best.ai_is_company = ai.is_company;
-      if (ai.name && ai.name.length >= 3) {
+      best.ai_name_valid = ai.name_valid;
+      best.ai_phone_valid = ai.phone_valid;
+      // 会社名: AIが妥当な名前を返した場合のみ採用
+      if (ai.name && ai.name.length >= 3 && ai.name_valid) {
         best.name = cleanCompanyName(ai.name);
+      }
+      // 電話番号: AIが phone_valid=true で番号を返したらそれを採用
+      // phone_valid=false なら regex で取った番号も信用できないので破棄
+      if (ai.phone && ai.phone_valid) {
+        best.phone = ai.phone;
+      } else if (!ai.phone_valid && best.phone) {
+        // 既存の電話番号がAIに棄却された場合
+        best.phone_rejected = best.phone;
+        best.phone = '';
       }
     }
   }
@@ -2600,16 +2616,14 @@ async function aiScoreBatch(companies, productText) {
 ${list}
 
 各社について:
-1. 「is_company」: HPを持つ実在の法人・店舗・事務所なら true(寛容に判定)。明らかに false にすべきは: ①「○○とは」「徹底比較」「ランキング」「選び方」等の解説/比較記事 ②求人ポータルや業者一覧サイト ③Wikipedia等の参考情報。少しでも企業らしい(法人名・電話・所在地のいずれかが明示されている)場合は true。
-2. 「name」: 正しい法人名(株式会社/合同会社/有限会社/医療法人等を含む)。タイトルからノイズを除去したクリーンな名前。法人名が判別できなければ null。
-3. 「s」: 適合度0-100。is_companyがfalseなら0でOK。
-   - 80-100: 主力ターゲットに完全合致
-   - 60-79: 関連性高い
-   - 40-59: 可能性あり
-4. 「r」: 30字以内の根拠
+1. 「is_company」(T/F): HPを持つ実在の法人・店舗・事務所なら true(寛容)。falseにすべきは ①解説/比較記事 ②求人ポータル/業者一覧 ③Wikipedia等の参考情報
+2. 「name」: 正しい法人名(株式会社/合同会社/有限会社/医療法人等を含む)。タイトルからノイズを除去したクリーンな名前。判別不能ならnull
+3. 「name_valid」(T/F): 上のnameが実在固有名詞として妥当か。「ホーム」「TOP」「公式サイト」のようなページタイトル断片はfalse
+4. 「s」: 適合度0-100(80+/60-79/40-59/20-39)
+5. 「r」: 30字以内の根拠
 
 JSON配列のみ返答:
-[{"i":1,"is_company":true,"name":"株式会社XXX","s":75,"r":"..."},...]`;
+[{"i":1,"is_company":true,"name":"株式会社XXX","name_valid":true,"s":75,"r":"..."},...]`;
   try {
     const text = await callClaude({ system: sys, prompt, max_tokens: 2500 });
     const m = text.match(/\[[\s\S]*\]/);
@@ -2621,6 +2635,7 @@ JSON配列のみ返答:
       return {
         is_company: f.is_company !== false,
         name: f.name || null,
+        name_valid: f.name_valid !== false,
         score: Math.max(0, Math.min(100, parseInt(f.s, 10) || 0)),
         reasoning: String(f.r || '').slice(0, 80),
       };
@@ -2646,14 +2661,15 @@ async function batchScoreExisting(productText, onProgress) {
       const toRemoveIds = [];
       batch.forEach((c, j) => {
         if (!results[j]) return;
-        if (results[j].is_company === false) {
+        if (results[j].is_company === false || results[j].name_valid === false) {
           toRemoveIds.push(c.id);
           return;
         }
         c.ai_score = results[j].score;
         c.ai_reasoning = results[j].reasoning;
         c.ai_scored_for = productText.slice(0, 60);
-        if (results[j].name && results[j].name.length >= 3) {
+        c.ai_name_valid = results[j].name_valid;
+        if (results[j].name && results[j].name.length >= 3 && results[j].name_valid) {
           c.name = cleanCompanyName(results[j].name);
         }
       });
@@ -2677,33 +2693,47 @@ async function batchScoreExisting(productText, onProgress) {
 
 async function aiScoreCompany(company, productText, hpText) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
-  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから適合度を評価してください。JSONのみで返答。`;
+  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから適合度を評価してください。会社名と電話番号の真偽もT/Fで判定してください。JSONのみで返答。`;
   const prompt = `商材: ${productText}
 
 企業情報:
-- 会社名: ${company.name}
+- 会社名(暫定): ${company.name}
 - URL: ${company.source_url || company.website || ''}
 - 業種: ${company.industry || '不明'}
 - 所在地: ${company.prefecture || ''} ${company.city || ''}
+- 抽出済み電話(暫定): ${company.phone || '未取得'}
 - HP説明: ${(company.description || '').slice(0, 200)}
-- HPテキスト抜粋: ${(hpText || '').slice(0, 1500)}
+- HPテキスト抜粋: ${(hpText || '').slice(0, 1800)}
 
 判定項目:
-1. is_company: HPを持つ実在の法人/店舗/事務所なら true(寛容に判定)。明らかに false にすべきは ①「○○とは」「徹底比較」「ランキング」「選び方」等の解説/比較記事 ②求人ポータルや業者一覧サイト ③Wikipedia等の参考情報のみ
-2. name: クリーンな法人名。タイトルからノイズ除去、HPから正式な法人名が判明すれば優先
-3. score: 0-100の適合度(80+/60-79/40-59/20-39/0-19の目安)
-4. reasoning: 30字以内の根拠
+1. is_company (T/F): HPを持つ実在の法人/店舗/事務所なら true(寛容)。明らかにfalseにすべきは: 解説/比較記事「○○とは」「ランキング」「選び方」、求人ポータル、業者一覧、Wikipedia等のみ
+2. name: HPから判明する正式な事業者名。可能なら法人格(株式会社/合同会社等)を含める。判別不能ならnull
+3. name_valid (T/F): 上のnameが実在する固有名詞として妥当か。「ホーム」「TOP」「お知らせ」「公式サイト」のようなページタイトル断片や、形容詞だけ・サービス名だけはfalse
+4. phone: HPテキスト内に明示されている代表電話番号。複数あれば「代表」「お問い合わせ」「TEL」の直後を最優先。日本の固定電話(0X-XXXX-XXXX)/フリーダイヤル(0120/0800)/携帯(070/080/090)のみ。FAXは除外。見つからなければnull
+5. phone_valid (T/F): 上のphoneがその事業者本物の代表連絡先として妥当か。FAX/個人携帯/別会社の番号/明らかな広告掲載番号はfalse
+6. score (0-100): 適合度(80+/60-79/40-59/20-39/0-19)
+7. reasoning: 30字以内の根拠
 
 JSONのみ返答:
-{"is_company": true|false, "name": "株式会社XXX or null", "score": 0-100, "reasoning": "..."}`;
+{"is_company": true|false, "name": "株式会社XXX or null", "name_valid": true|false, "phone": "03-1234-5678 or null", "phone_valid": true|false, "score": 0-100, "reasoning": "..."}`;
   try {
-    const text = await callClaude({ system: sys, prompt, max_tokens: 400 });
+    const text = await callClaude({ system: sys, prompt, max_tokens: 500 });
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const obj = JSON.parse(m[0]);
+    // 電話番号は正規表現でも再検証(AIが嘘の番号を作るのを防ぐ)
+    let phone = obj.phone || null;
+    let phoneValid = obj.phone_valid === true;
+    if (phone && !isValidJapanesePhone(phone)) {
+      phone = null;
+      phoneValid = false;
+    }
     return {
       is_company: obj.is_company !== false,
       name: obj.name || null,
+      name_valid: obj.name_valid !== false,
+      phone,
+      phone_valid: phoneValid,
       score: Math.max(0, Math.min(100, parseInt(obj.score, 10) || 0)),
       reasoning: obj.reasoning || '',
       fit: obj.fit || 'mid',
