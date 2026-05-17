@@ -2879,6 +2879,14 @@ async function runPipeline(input, options = {}) {
     alert('企業データが0件です。先に「🌐 ウェブから企業を発見して分析」で発見するか、サイドバーから取込してください。');
     return;
   }
+  // 押した瞬間にフィードバックを出す(AI分析中の数秒間も無反応に見えないように)
+  const progElEarly = document.getElementById('discovery-progress');
+  if (discover && progElEarly) {
+    progElEarly.hidden = false;
+    progElEarly.classList.remove('done', 'error');
+    progElEarly.textContent = '🤖 AIが商材を分析中…(数秒〜十数秒)';
+    progElEarly.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
   if (store.opts.aiKey || store.opts.braveProxy) {
     setAIStatus('AI分析中…', 'mid');
     try {
@@ -3277,6 +3285,15 @@ async function init() {
     };
     btn.classList.add('searching');
     updateBtn();
+    // 進捗パネルも即座に表示(AI分析中の数秒間で「押せたか不明」にならないように)
+    const progElImmediate = document.getElementById('discovery-progress');
+    if (progElImmediate) {
+      progElImmediate.hidden = false;
+      progElImmediate.classList.remove('done', 'error');
+      progElImmediate.textContent = '🚀 検索を開始しています…';
+    }
+    // 次フレームまで描画を待ってから重い処理に入る
+    await new Promise(r => requestAnimationFrame(() => r()));
     const tick = setInterval(updateBtn, 2000);
     try {
       // 初回検索
