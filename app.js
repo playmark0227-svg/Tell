@@ -1127,7 +1127,7 @@ const store = {
   followUps: [],     // [{id, t}] next-callback queue
   profiles: [],      // [{id, name, productText, icp, strategy, classification, savedAt}]
   activeProfile: null,
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [] },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], landlineOnly: true, bravePages: 2 },
 };
 
 function loadStore() {
@@ -1732,6 +1732,13 @@ const BRAVE_EXCLUDED_DOMAINS = new Set([
   // 業者DB
   'houjin-bangou.nta.go.jp','search.brave.com',
   'baseconnect.in','musubu.in','bizmaps.jp','onecareer.jp',
+  // SEO上位を独占する比較・ランキング・大手メディア(中小法人HPを見つけにくくする)
+  'all-senmonka.jp','startup-db.com','salesnow.com','salesnow.jp',
+  'mitsuri.co','techport.co.jp','manufacturing-base.com',
+  'oricon.co.jp','itreview.jp','boxil.jp','bizhint.jp','bplats.com',
+  'mynavi-agent.jp','beyondteam.jp','recruit-direct-scout.jp',
+  'tenshoku.co.jp','levtech-rookie.jp','levtech-career.jp',
+  'gmedia.jp','navi-pro.jp','smartcompany.jp',
 ]);
 
 function rootDomain(url) {
@@ -1889,23 +1896,41 @@ function isValidJapanesePhone(raw) {
   return true;
 }
 
+// 個人携帯の可能性が高い番号(070/080/090)を判定
+// 個人携帯への営業電話は特商法/個人情報保護法上のリスクが高いため、
+// landlineOnly=true(デフォルト) の場合は収集段階で弾く
+function isMobilePhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return /^0[789]0/.test(digits);
+}
+
+function isAcceptablePhone(raw) {
+  if (!isValidJapanesePhone(raw)) return false;
+  // landlineOnly が明示的に false 設定されていない限り、携帯は除外
+  const landlineOnly = store.opts.landlineOnly !== false;
+  if (landlineOnly && isMobilePhone(raw)) return false;
+  return true;
+}
+
 function extractPhoneFromText(text) {
   if (!text) return '';
   const str = String(text);
   const matches = [...str.matchAll(PHONE_RE_JS)];
   if (matches.length === 0) return '';
 
-  // ヒント付き(TEL/電話/☎の直後)の候補を優先
+  // ヒント付き(TEL/電話/☎の直後)の候補を優先。FAX直後は除外
   const hinted = [];
   const plain = [];
   for (const m of matches) {
     const raw = m[0];
-    if (!isValidJapanesePhone(raw)) continue;
+    if (!isAcceptablePhone(raw)) continue;
     const idx = m.index;
     const before = str.slice(Math.max(0, idx - 15), idx);
     // 郵便番号や住所番地っぽいなら除外
     if (/〒|郵便番号/.test(before)) continue;
     if (/(丁目|番地|号|番|区|町|大字)\s*$/.test(before)) continue;
+    // FAXは除外
+    if (/(FAX|ファクス|ファックス|Fax|fax)/.test(before)) continue;
     if (PHONE_HINT_RE.test(before)) hinted.push(raw);
     else plain.push(raw);
   }
@@ -2016,7 +2041,7 @@ function openRegionModal() {
 }
 
 const _braveLastCall = { t: 0 };
-async function braveSearch(query, count = 10) {
+async function braveSearchOnce(query, count = 20, offset = 0) {
   const hasProxy = !!store.opts.braveProxy;
   if (!hasProxy && !store.opts.braveKey) throw new Error('プロキシURLかAPIキーを設定してください');
 
@@ -2030,6 +2055,7 @@ async function braveSearch(query, count = 10) {
     country: 'JP', search_lang: 'jp', ui_lang: 'ja-JP',
     result_filter: 'web',
   });
+  if (offset > 0) params.set('offset', String(offset));
 
   let url, headers;
   if (hasProxy) {
@@ -2058,49 +2084,82 @@ async function braveSearch(query, count = 10) {
   return (data.web?.results || []);
 }
 
+// 複数ページ取得して SEO 上位以外にもリーチする
+async function braveSearch(query, count = 10) {
+  const pages = Math.max(1, Math.min(4, store.opts.bravePages || 2));
+  if (pages === 1) return await braveSearchOnce(query, count, 0);
+  const all = [];
+  const seenUrls = new Set();
+  for (let p = 0; p < pages; p++) {
+    let batch;
+    try {
+      batch = await braveSearchOnce(query, 20, p * 20);
+    } catch (e) {
+      if (p === 0) throw e;
+      console.warn(`brave page ${p+1} failed:`, e.message);
+      break;
+    }
+    if (!batch || batch.length === 0) break;
+    for (const r of batch) {
+      if (r.url && !seenUrls.has(r.url)) {
+        seenUrls.add(r.url);
+        all.push(r);
+      }
+    }
+    if (batch.length < 20) break; // これ以上ページがない
+  }
+  return all;
+}
+
 function generateQueriesFromICP(productText, icp, round = 0) {
   const industries = icp?.industries || [];
   const queries = [];
   const seen = new Set();
-  // ラウンドごとにキーワードを変えて重複を回避
+  // ラウンドごとにキーワードを変えて重複を回避。中小〜中堅にもリーチする長尾クエリを混ぜる。
   const KEYWORD_SETS = [
-    ['中小企業 会社概要', '株式会社 採用 募集', '代表電話'],
-    ['公式サイト', '社長メッセージ', '会社案内'],
-    ['新卒採用 募集', '中途採用 採用情報', 'キャリア採用'],
-    ['本社 アクセス', '事業内容 法人', '会社情報 設立'],
-    ['お問い合わせ 法人', 'IR情報', 'プレスリリース'],
+    ['中小企業 会社概要 代表電話', '株式会社 製造 創業', '従業員 30名 工場'],
+    ['公式サイト 沿革', '社長メッセージ 創業', '会社案内 PDF'],
+    ['新卒採用 募集 中小', '中途採用 採用情報 工場', '従業員数 50名'],
+    ['本社 アクセス 地図', '事業内容 法人 取引先', '会社情報 設立 資本金'],
+    ['お問い合わせ 法人代表', '事業所一覧', '工場一覧 営業所'],
+    ['協同組合', '商工会議所 会員', '組合員 名簿'],
   ];
   const kws = KEYWORD_SETS[round % KEYWORD_SETS.length];
   for (const ind of industries.slice(0, 4)) {
     for (const kw of kws) {
       const q = `${ind} ${kw}`;
       if (!seen.has(q)) { queries.push(q); seen.add(q); }
-      if (queries.length >= 6) break;
+      if (queries.length >= 8) break;
     }
-    if (queries.length >= 6) break;
+    if (queries.length >= 8) break;
   }
   if (queries.length === 0) {
     queries.push(`${productText.split(/[、。\s]/)[0]} 導入企業 会社`);
   }
-  return queries.slice(0, 5);
+  return queries.slice(0, 6);
 }
 
 async function aiGenerateQueries(productText, icp) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return generateQueriesFromICP(productText, icp);
   try {
-    const prompt = `以下の商材を購入しそうな日本企業をWeb検索で見つけるためのクエリを5個、JSON配列のみで返してください。
+    const prompt = `以下の商材を購入しそうな日本企業をWeb検索で見つけるためのクエリを6個、JSON配列のみで返してください。
 
 商材: ${productText}
 ターゲット業種: ${(icp.industries||[]).join('、')}
 
-要件: 各クエリは「業種＋特性＋公式HPがヒットしやすいキーワード」(例「金属加工 中小企業 会社概要」)。説明文不要。
+要件:
+- 大手SEOブログや比較サイトではなく「中小〜中堅の法人HP」がヒットするように
+- 業種＋地域＋規模ワード(従業員数/工場/事業所)＋公式HP用語(会社概要/代表電話/沿革)を組合せ
+- 大手だけ並ぶような汎用ワードは避ける
+- 半分は地域名(関東/中部/関西等)や具体地名を入れる
+- 6個のクエリは互いに異なる切り口で
 
-例: ["金属加工 東京 中小企業 会社概要","印刷会社 大阪 採用"]`;
-    const text = await callClaude({ system: 'B2B営業クエリ生成専門家', prompt, max_tokens: 600 });
+例: ["金属加工 中小 関東 工場一覧","印刷 従業員30名 大阪 会社概要","樹脂成形 創業 中部 代表電話","食品加工 兵庫 事業所 沿革"]`;
+    const text = await callClaude({ system: 'B2B営業クエリ生成専門家。中堅・中小企業を見つけるためのSEO上位回避型クエリを作る。', prompt, max_tokens: 700 });
     const m = text.match(/\[[\s\S]*\]/);
     if (!m) return generateQueriesFromICP(productText, icp);
     const arr = JSON.parse(m[0]);
-    return arr.filter(q => typeof q === 'string').slice(0, 5);
+    return arr.filter(q => typeof q === 'string').slice(0, 6);
   } catch (e) {
     console.warn('aiGenerateQueries failed', e);
     return generateQueriesFromICP(productText, icp);
@@ -2709,8 +2768,8 @@ async function aiScoreCompany(company, productText, hpText) {
 1. is_company (T/F): HPを持つ実在の法人/店舗/事務所なら true(寛容)。明らかにfalseにすべきは: 解説/比較記事「○○とは」「ランキング」「選び方」、求人ポータル、業者一覧、Wikipedia等のみ
 2. name: HPから判明する正式な事業者名。可能なら法人格(株式会社/合同会社等)を含める。判別不能ならnull
 3. name_valid (T/F): 上のnameが実在する固有名詞として妥当か。「ホーム」「TOP」「お知らせ」「公式サイト」のようなページタイトル断片や、形容詞だけ・サービス名だけはfalse
-4. phone: HPテキスト内に明示されている代表電話番号。複数あれば「代表」「お問い合わせ」「TEL」の直後を最優先。日本の固定電話(0X-XXXX-XXXX)/フリーダイヤル(0120/0800)/携帯(070/080/090)のみ。FAXは除外。見つからなければnull
-5. phone_valid (T/F): 上のphoneがその事業者本物の代表連絡先として妥当か。FAX/個人携帯/別会社の番号/明らかな広告掲載番号はfalse
+4. phone: HPテキスト内に明示されている法人代表電話番号。複数あれば「代表」「お問い合わせ」「TEL」の直後を最優先。${store.opts.landlineOnly !== false ? '【重要】個人携帯(070/080/090)は除外し、固定電話(0X-XXXX-XXXX)/フリーダイヤル(0120/0800)のみ抽出' : '固定電話・携帯・フリーダイヤル可'}。FAXは除外。見つからなければnull
+5. phone_valid (T/F): 上のphoneがその事業者本物の代表連絡先として妥当か。FAX/個人携帯(landline only時)/別会社の番号/明らかな広告掲載番号はfalse
 6. score (0-100): 適合度(80+/60-79/40-59/20-39/0-19)
 7. reasoning: 30字以内の根拠
 
@@ -2722,9 +2781,10 @@ JSONのみ返答:
     if (!m) return null;
     const obj = JSON.parse(m[0]);
     // 電話番号は正規表現でも再検証(AIが嘘の番号を作るのを防ぐ)
+    // 個人携帯は landlineOnly=true なら破棄
     let phone = obj.phone || null;
     let phoneValid = obj.phone_valid === true;
-    if (phone && !isValidJapanesePhone(phone)) {
+    if (phone && !isAcceptablePhone(phone)) {
       phone = null;
       phoneValid = false;
     }
@@ -3181,6 +3241,10 @@ async function init() {
   document.getElementById('opt-exclude-dnc').checked = store.opts.excludeDnc;
   document.getElementById('opt-saved-only').checked = store.opts.savedOnly;
   document.getElementById('opt-dark').checked = !!store.opts.dark;
+  const landlineEl = document.getElementById('opt-landline-only');
+  if (landlineEl) landlineEl.checked = store.opts.landlineOnly !== false;
+  const bravePagesEl = document.getElementById('opt-brave-pages');
+  if (bravePagesEl) bravePagesEl.value = String(store.opts.bravePages || 2);
   if (store.opts.dark) document.documentElement.setAttribute('data-theme', 'dark');
 
   document.getElementById('opt-dark').addEventListener('change', e => {
@@ -3432,6 +3496,16 @@ async function init() {
   document.getElementById('opt-saved-only').addEventListener('change', e => {
     store.opts.savedOnly = e.target.checked;
     saveStore(); renderResults();
+  });
+  const landlineToggle = document.getElementById('opt-landline-only');
+  if (landlineToggle) landlineToggle.addEventListener('change', e => {
+    store.opts.landlineOnly = e.target.checked;
+    saveStore();
+  });
+  const bravePagesSelect = document.getElementById('opt-brave-pages');
+  if (bravePagesSelect) bravePagesSelect.addEventListener('change', e => {
+    store.opts.bravePages = Math.max(1, Math.min(4, parseInt(e.target.value, 10) || 2));
+    saveStore();
   });
 
   document.getElementById('export-results').addEventListener('click', exportResults);

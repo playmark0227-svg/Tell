@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260514o">
+<link rel="stylesheet" href="style.css?v=20260514p">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -175,6 +175,17 @@
       </label>
       <label class="kv"><span>保存のみ表示</span>
         <input type="checkbox" id="opt-saved-only">
+      </label>
+      <label class="kv" title="個人携帯(070/080/090)を収集対象から除外。法人代表番号(固定電話/0120/0800)のみ保存します。コンプライアンス推奨。"><span>📞 法人代表番号のみ収集<br><small style="color:var(--muted);font-weight:normal">携帯番号(070/080/090)を除外</small></span>
+        <input type="checkbox" id="opt-landline-only" checked>
+      </label>
+      <label class="kv" title="Brave検索の取得ページ数。多いほど中小企業にもリーチしやすいが時間がかかる。"><span>🔍 検索取得ページ数</span>
+        <select id="opt-brave-pages" style="width:80px">
+          <option value="1">1ページ</option>
+          <option value="2" selected>2ページ</option>
+          <option value="3">3ページ</option>
+          <option value="4">4ページ</option>
+        </select>
       </label>
       <label class="kv"><span>🌙 ダークモード</span>
         <input type="checkbox" id="opt-dark">
@@ -493,7 +504,7 @@
   </div>
 </div>
 
-<script src="data/regions.js?v=20260514o"></script>
-<script src="app.js?v=20260514o"></script>
+<script src="data/regions.js?v=20260514p"></script>
+<script src="app.js?v=20260514p"></script>
 </body>
 </html>
