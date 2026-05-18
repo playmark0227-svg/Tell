@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260514p">
+<link rel="stylesheet" href="style.css?v=20260514q">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -176,9 +176,11 @@
       <label class="kv"><span>保存のみ表示</span>
         <input type="checkbox" id="opt-saved-only">
       </label>
-      <label class="kv" title="個人携帯(070/080/090)を収集対象から除外。法人代表番号(固定電話/0120/0800)のみ保存します。コンプライアンス推奨。"><span>📞 法人代表番号のみ収集<br><small style="color:var(--muted);font-weight:normal">携帯番号(070/080/090)を除外</small></span>
-        <input type="checkbox" id="opt-landline-only" checked>
-      </label>
+      <div class="kv" style="background:var(--bg);border-radius:6px;padding:8px;font-size:12px;color:var(--muted);line-height:1.5">
+        🛡 <strong>コンプラ強制</strong>: 個人携帯(070/080/090)は仕様上収集しません。法人代表番号(固定/0120/0800)のみ。
+      </div>
+      <button class="side-btn" id="export-usage-log" style="font-size:12px">📋 使用ログをCSV出力</button>
+      <button class="side-btn ghost" id="view-tos" style="font-size:12px">利用規約を再表示</button>
       <label class="kv" title="Brave検索の取得ページ数。多いほど中小企業にもリーチしやすいが時間がかかる。"><span>🔍 検索取得ページ数</span>
         <select id="opt-brave-pages" style="width:80px">
           <option value="1">1ページ</option>
@@ -504,7 +506,53 @@
   </div>
 </div>
 
-<script src="data/regions.js?v=20260514p"></script>
-<script src="app.js?v=20260514p"></script>
+<div id="tos-modal" class="modal" hidden>
+  <div class="modal-content wide">
+    <h3>利用規約 / コンプライアンス同意</h3>
+    <div style="max-height:50vh;overflow:auto;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px;line-height:1.7">
+      <p><strong>本ツールはB2B（法人間）営業の生産性向上を目的としたものです。</strong>利用にあたり以下の事項に同意いただきます。</p>
+      <h4>1. 利用範囲</h4>
+      <ul>
+        <li>本ツールが収集・表示するのは、ウェブ上で公開された<strong>法人の代表電話番号(固定電話/0120/0800)</strong>のみです。</li>
+        <li>個人携帯番号(070/080/090)は<strong>仕様上収集できません</strong>。</li>
+        <li>収集データの利用は<strong>法人向けB2B営業</strong>に限定し、個人を対象とした勧誘・販売には使用しません。</li>
+      </ul>
+      <h4>2. 関連法令の遵守</h4>
+      <ul>
+        <li>個人情報保護法、特定商取引法、電気通信事業法、その他関連法令を遵守します。</li>
+        <li>架電時には事業者名・勧誘目的を明示します（特商法）。</li>
+        <li>相手方から「不要」「再勧誘禁止」と告げられた場合、本ツールのDNC機能で登録し再架電しません。</li>
+      </ul>
+      <h4>3. 禁止事項</h4>
+      <ul>
+        <li>収集データの第三者への譲渡・販売</li>
+        <li>個人を対象とした勧誘・調査・マーケティング</li>
+        <li>取得したデータを違法な手段（なりすまし、詐欺等）に利用すること</li>
+        <li>本ツールを名簿屋業務・個人情報の不正取得に転用すること</li>
+      </ul>
+      <h4>4. 免責</h4>
+      <ul>
+        <li>本ツールはデータの正確性・最新性を保証しません。架電前に各自で確認してください。</li>
+        <li>本ツールの利用に起因する一切のトラブル・損害について、ツール提供者は責任を負いません。</li>
+        <li>違法利用による責任は利用者本人に帰属します。</li>
+      </ul>
+      <h4>5. ログ</h4>
+      <ul>
+        <li>検索・架電・DNC等の操作は監査用にローカル保存されます（外部送信なし）。サイドバーからCSV出力できます。</li>
+      </ul>
+    </div>
+    <label class="kv" style="margin-top:12px;display:flex;align-items:center;gap:8px">
+      <input type="checkbox" id="tos-checkbox">
+      <span>上記すべての内容を理解し、遵守することに同意します</span>
+    </label>
+    <div class="modal-actions">
+      <button id="tos-agree" disabled>同意して開始</button>
+      <button id="tos-decline" class="ghost">同意しない（利用中止）</button>
+    </div>
+  </div>
+</div>
+
+<script src="data/regions.js?v=20260514q"></script>
+<script src="app.js?v=20260514q"></script>
 </body>
 </html>

@@ -1118,6 +1118,7 @@ const STORAGE_KEY = 'tell.v1';
 const store = {
   saved: new Set(),
   dnc: new Set(),
+  dncPhones: new Set(),  // 番号ベースのDNC: 一度DNC指定された電話番号は再収集も拒否
   status: {},
   notes: {},
   history: [],
@@ -1127,7 +1128,10 @@ const store = {
   followUps: [],     // [{id, t}] next-callback queue
   profiles: [],      // [{id, name, productText, icp, strategy, classification, savedAt}]
   activeProfile: null,
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], landlineOnly: true, bravePages: 2 },
+  usageLog: [],      // { t, action, ref, meta } 監査用ログ(最新1000件)
+  tosAccepted: false,
+  tosAcceptedAt: 0,
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2 },
 };
 
 function loadStore() {
@@ -1137,6 +1141,7 @@ function loadStore() {
     const d = JSON.parse(raw);
     store.saved = new Set(d.saved || []);
     store.dnc = new Set(d.dnc || []);
+    store.dncPhones = new Set(d.dncPhones || []);
     store.status = d.status || {};
     store.notes = d.notes || {};
     store.history = d.history || [];
@@ -1146,6 +1151,9 @@ function loadStore() {
     store.followUps = d.followUps || [];
     store.profiles = d.profiles || [];
     store.activeProfile = d.activeProfile || null;
+    store.usageLog = Array.isArray(d.usageLog) ? d.usageLog : [];
+    store.tosAccepted = d.tosAccepted === true;
+    store.tosAcceptedAt = d.tosAcceptedAt || 0;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1172,6 +1180,7 @@ function _saveStoreImpl() {
   const d = {
     saved: [...store.saved],
     dnc: [...store.dnc],
+    dncPhones: [...(store.dncPhones || new Set())],
     status: store.status,
     notes: store.notes,
     history: store.history,
@@ -1181,21 +1190,48 @@ function _saveStoreImpl() {
     followUps: store.followUps,
     profiles: store.profiles,
     activeProfile: store.activeProfile,
+    usageLog: store.usageLog || [],
+    tosAccepted: store.tosAccepted,
+    tosAcceptedAt: store.tosAcceptedAt,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
 }
 
+/* ============ 使用ログ(監査用) ============ */
+function logAction(action, ref = '', meta = null) {
+  if (!store.usageLog) store.usageLog = [];
+  store.usageLog.unshift({ t: Date.now(), action, ref: String(ref).slice(0, 200), meta: meta ? String(JSON.stringify(meta)).slice(0, 300) : null });
+  // 直近1000件のみ保持(localStorage肥大化防止)
+  if (store.usageLog.length > 1000) store.usageLog.length = 1000;
+}
+
 /* ============ Actions ============ */
+function findCompanyById(id) {
+  return getAllCompanies().find(c => c.id === id) || (state.companies || []).find(c => c.id === id);
+}
+
 function toggleSave(id) {
-  if (store.saved.has(id)) store.saved.delete(id); else store.saved.add(id);
+  const willSave = !store.saved.has(id);
+  if (willSave) store.saved.add(id); else store.saved.delete(id);
+  const company = findCompanyById(id);
+  logAction(willSave ? 'save' : 'unsave', company ? `${company.name}/${company.phone||''}` : id);
   saveStore();
   renderResults();
   renderSidebar();
 }
 
 function toggleDnc(id) {
-  if (store.dnc.has(id)) store.dnc.delete(id); else store.dnc.add(id);
+  const willDnc = !store.dnc.has(id);
+  if (willDnc) store.dnc.add(id); else store.dnc.delete(id);
+  // 番号DNC: 一度DNCした番号は今後の収集時も拒否
+  if (!store.dncPhones) store.dncPhones = new Set();
+  const company = findCompanyById(id);
+  if (willDnc && company && company.phone) {
+    const key = normalizePhoneKey(company.phone);
+    if (key) store.dncPhones.add(key);
+  }
+  logAction(willDnc ? 'dnc' : 'undnc', company ? `${company.name}/${company.phone||''}` : id);
   saveStore();
   renderResults();
   renderSidebar();
@@ -1282,6 +1318,7 @@ function recordCall(id) {
   if (!company) return;
   store.history.unshift({ id, status: 'called', t: Date.now() });
   store.history = store.history.slice(0, 50);
+  logAction('call', `${company.name}/${company.phone||''}`);
   saveStore();
   renderSidebar();
   const tel = company.phone.replace(/[^0-9+]/g, '');
@@ -1607,13 +1644,78 @@ function toCsv(rows) {
 function exportResults() {
   const rows = applyFilters();
   if (rows.length === 0) return alert('結果がありません');
+  logAction('csv_export_results', `${rows.length}件`);
+  saveStore();
   downloadFile(`tell-results-${Date.now()}.csv`, toCsv(rows));
 }
 
 function exportSaved() {
   const rows = [...store.saved].map(id => state.scored.find(c => c.id === id) || state.companies.find(c => c.id === id)).filter(Boolean);
   if (rows.length === 0) return alert('保存リストが空です');
+  logAction('csv_export_saved', `${rows.length}件`);
+  saveStore();
   downloadFile(`tell-saved-${Date.now()}.csv`, toCsv(rows));
+}
+
+/* ============ 利用規約モーダル ============ */
+function showTosModal(force = false) {
+  const modal = document.getElementById('tos-modal');
+  if (!modal) return;
+  // 強制再表示時は同意状態をリセット表示しない
+  const cb = document.getElementById('tos-checkbox');
+  const agree = document.getElementById('tos-agree');
+  if (cb) cb.checked = false;
+  if (agree) agree.disabled = true;
+  modal.hidden = false;
+  // 「再表示」モードでは「同意しない」ボタンを「閉じる」に変える
+  const decline = document.getElementById('tos-decline');
+  if (decline) decline.textContent = force ? '閉じる' : '同意しない（利用中止）';
+}
+
+function setupTosModal() {
+  const cb = document.getElementById('tos-checkbox');
+  const agree = document.getElementById('tos-agree');
+  const decline = document.getElementById('tos-decline');
+  if (!cb || !agree || !decline) return;
+  cb.addEventListener('change', () => { agree.disabled = !cb.checked; });
+  agree.addEventListener('click', () => {
+    if (!cb.checked) return;
+    store.tosAccepted = true;
+    store.tosAcceptedAt = Date.now();
+    logAction('tos_accepted', '同意');
+    saveStore();
+    document.getElementById('tos-modal').hidden = true;
+  });
+  decline.addEventListener('click', () => {
+    // 同意済みなら閉じるだけ、未同意なら警告して機能ロック
+    if (store.tosAccepted) {
+      document.getElementById('tos-modal').hidden = true;
+    } else {
+      alert('利用規約への同意が必要です。同意いただけない場合、検索機能は使用できません。');
+      document.getElementById('tos-modal').hidden = true;
+    }
+  });
+  // 初回起動時に同意なしなら表示
+  if (!store.tosAccepted) {
+    setTimeout(() => showTosModal(false), 300);
+  }
+}
+
+function requireTosAccepted() {
+  if (store.tosAccepted) return true;
+  showTosModal(false);
+  return false;
+}
+
+function exportUsageLog() {
+  const log = store.usageLog || [];
+  if (log.length === 0) return alert('使用ログがありません');
+  const header = 'timestamp,action,reference,meta\n';
+  const body = log.map(e => {
+    const ts = new Date(e.t).toISOString();
+    return [ts, e.action, e.ref || '', e.meta || ''].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+  }).join('\n');
+  downloadFile(`tell-usage-log-${Date.now()}.csv`, header + body);
 }
 
 function exportAll() {
@@ -1896,9 +1998,8 @@ function isValidJapanesePhone(raw) {
   return true;
 }
 
-// 個人携帯の可能性が高い番号(070/080/090)を判定
-// 個人携帯への営業電話は特商法/個人情報保護法上のリスクが高いため、
-// landlineOnly=true(デフォルト) の場合は収集段階で弾く
+// 個人携帯(070/080/090)への営業電話は特商法/個人情報保護法上のリスクが高いため、
+// 収集段階で常に弾く(コンプライアンス遵守のため OFF にできない設計)
 function isMobilePhone(raw) {
   const digits = String(raw || '').replace(/\D/g, '');
   return /^0[789]0/.test(digits);
@@ -1906,10 +2007,21 @@ function isMobilePhone(raw) {
 
 function isAcceptablePhone(raw) {
   if (!isValidJapanesePhone(raw)) return false;
-  // landlineOnly が明示的に false 設定されていない限り、携帯は除外
-  const landlineOnly = store.opts.landlineOnly !== false;
-  if (landlineOnly && isMobilePhone(raw)) return false;
+  // 個人携帯は常に除外(コンプラ強制)
+  if (isMobilePhone(raw)) return false;
+  // DNCに登録された番号は再収集も拒否
+  if (isPhoneDnc(raw)) return false;
   return true;
+}
+
+function normalizePhoneKey(raw) {
+  return String(raw || '').replace(/\D/g, '');
+}
+
+function isPhoneDnc(raw) {
+  const key = normalizePhoneKey(raw);
+  if (!key) return false;
+  return (store.dncPhones || new Set()).has(key);
 }
 
 function extractPhoneFromText(text) {
@@ -3241,11 +3353,11 @@ async function init() {
   document.getElementById('opt-exclude-dnc').checked = store.opts.excludeDnc;
   document.getElementById('opt-saved-only').checked = store.opts.savedOnly;
   document.getElementById('opt-dark').checked = !!store.opts.dark;
-  const landlineEl = document.getElementById('opt-landline-only');
-  if (landlineEl) landlineEl.checked = store.opts.landlineOnly !== false;
   const bravePagesEl = document.getElementById('opt-brave-pages');
   if (bravePagesEl) bravePagesEl.value = String(store.opts.bravePages || 2);
   if (store.opts.dark) document.documentElement.setAttribute('data-theme', 'dark');
+  // 初回起動時は利用規約モーダル
+  setupTosModal();
 
   document.getElementById('opt-dark').addEventListener('change', e => {
     store.opts.dark = e.target.checked;
@@ -3363,14 +3475,19 @@ async function init() {
   document.getElementById('analyze-btn').addEventListener('click', async () => {
     const input = document.getElementById('product-input').value.trim();
     if (!input) { alert('商材を入力してください'); return; }
+    if (!requireTosAccepted()) return;
     if (state.continuousSearch) {
       // 既に検索中 → 停止
       state.continuousSearch = false;
       state.searchAborted = true;
+      logAction('search_stopped', input.slice(0, 80));
+      saveStore();
       return;
     }
     state.continuousSearch = true;
     state.searchAborted = false;
+    logAction('search_started', input.slice(0, 80), { regionPrefs: store.opts.regionPrefs, regionCities: store.opts.regionCities });
+    saveStore();
     const btn = document.getElementById('analyze-btn');
     const origText = btn.textContent;
     const updateBtn = () => {
@@ -3410,6 +3527,7 @@ async function init() {
   document.getElementById('analyze-existing-btn').addEventListener('click', async () => {
     const input = document.getElementById('product-input').value.trim();
     if (!input) { alert('商材を入力してください'); return; }
+    if (!requireTosAccepted()) return;
     await runPipeline(input, { discover: false });
   });
 
@@ -3497,11 +3615,6 @@ async function init() {
     store.opts.savedOnly = e.target.checked;
     saveStore(); renderResults();
   });
-  const landlineToggle = document.getElementById('opt-landline-only');
-  if (landlineToggle) landlineToggle.addEventListener('change', e => {
-    store.opts.landlineOnly = e.target.checked;
-    saveStore();
-  });
   const bravePagesSelect = document.getElementById('opt-brave-pages');
   if (bravePagesSelect) bravePagesSelect.addEventListener('change', e => {
     store.opts.bravePages = Math.max(1, Math.min(4, parseInt(e.target.value, 10) || 2));
@@ -3514,6 +3627,10 @@ async function init() {
   if (eri) eri.addEventListener('click', exportResults);
   const esi = document.getElementById('export-saved-inline');
   if (esi) esi.addEventListener('click', exportSaved);
+  const eul = document.getElementById('export-usage-log');
+  if (eul) eul.addEventListener('click', exportUsageLog);
+  const viewTos = document.getElementById('view-tos');
+  if (viewTos) viewTos.addEventListener('click', () => showTosModal(true));
   document.getElementById('export-all').addEventListener('click', exportAll);
   document.getElementById('import-file').addEventListener('change', e => {
     if (e.target.files[0]) importJson(e.target.files[0]);
@@ -3640,9 +3757,12 @@ async function init() {
     store.history = []; saveStore(); renderSidebar();
   });
   document.getElementById('reset-all').addEventListener('click', () => {
-    if (!confirm('保存・DNC・履歴・メモを全削除します。よろしいですか？')) return;
+    if (!confirm('保存・DNC・履歴・メモ・使用ログを全削除します。よろしいですか？\n(利用規約への同意状態は保持されます)')) return;
     store.saved.clear(); store.dnc.clear();
+    if (store.dncPhones) store.dncPhones.clear();
     store.status = {}; store.notes = {}; store.history = [];
+    store.usageLog = [];
+    logAction('reset_all', '全データリセット');
     saveStore(); renderResults(); renderSidebar();
   });
 
