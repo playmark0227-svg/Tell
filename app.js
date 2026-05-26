@@ -1049,6 +1049,7 @@ function renderResults() {
   const tbody = document.querySelector('#results-table tbody');
   if (!tbody) return;
   const total = state.scored.length;
+  renderQualitySummary(filtered);
 
   if (filtered.length === 0 && total > 0) {
     // フィルタで弾かれている → 案内+リセットボタン表示
@@ -2479,26 +2480,39 @@ function downloadFile(filename, content, type = 'text/csv;charset=utf-8') {
 }
 
 function toCsv(rows) {
-  const headers = ['会社名','電話番号','HP','お問い合わせURL','業種','都道府県','市区町村','従業員数','適合度','ステータス','メモ','根拠'];
+  // 基本+詳細フィールドを全て出力 (リッチCSV - 営業担当が架電前に1ファイルで見渡せる)
+  const headers = [
+    '会社名','電話番号','HP','お問い合わせURL','業種','都道府県','市区町村','住所','従業員数','適合度','確信度','ステータス','メモ','根拠',
+    '法人番号','正式名(国税庁)','公式所在地(国税庁)','活動性','HP信頼性',
+    '競合','適合根拠','購買シグナル','HP引用','架電トピック','決裁者候補','リスク',
+    'スコア内訳(地域)','内訳(業種)','内訳(規模)','内訳(タイミング)','内訳(根拠)','内訳(課題)',
+    'リランキング前スコア','リランキング理由','Deep評価','データソース',
+  ];
   const lines = [headers.join(',')];
+  const esc = v => `"${String(v || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`;
+  const arrJoin = a => Array.isArray(a) ? a.join(' / ') : '';
   rows.forEach(c => {
     const status = store.status[c.id] || '';
-    const note = (store.notes[c.id] || '').replace(/"/g, '""').replace(/\n/g, ' ');
-    const reasoning = (c.reasoning || '').replace(/"/g, '""');
+    const note = store.notes[c.id] || '';
     const urls = getCompanyUrls(c);
+    const d = c.ai_dimensions || {};
     lines.push([
-      `"${c.name}"`,
-      `"${c.phone || ''}"`,
-      `"${urls.website}"`,
-      `"${urls.contact}"`,
-      `"${c.industry}"`,
-      `"${c.prefecture}"`,
-      `"${c.city || ''}"`,
-      c.employees,
-      c.score ?? '',
-      `"${status}"`,
-      `"${note}"`,
-      `"${reasoning}"`,
+      esc(c.name), esc(c.phone), esc(urls.website), esc(urls.contact),
+      esc(c.industry), esc(c.prefecture), esc(c.city), esc(c.address || ''),
+      c.employees || '', c.score ?? '', esc(c.ai_confidence || ''),
+      esc(status), esc(note), esc(c.reasoning),
+      esc(c.houjin_bangou || ''), esc(c.official_name || ''), esc(c.official_address || ''),
+      esc(c.activeness || ''), c.credibility_score ?? '',
+      c.is_competitor ? 'YES' : '', esc(c.ai_fit_evidence || ''),
+      esc(arrJoin(c.ai_buying_signals)),
+      esc(Array.isArray(c.ai_fit_citations) ? c.ai_fit_citations.map(x => `「${x.quote||''}」`).join(' / ') : ''),
+      esc(arrJoin(c.ai_talking_points)),
+      esc(Array.isArray(c.ai_decision_makers) ? c.ai_decision_makers.map(x => `${x.title||''}${x.name?': '+x.name:''}`).join(' / ') : ''),
+      esc(arrJoin(c.ai_risks)),
+      d.region_match ?? '', d.industry_match ?? '', d.size_match ?? '',
+      d.timing_signal ?? '', d.evidence_strength ?? '', d.pain_alignment ?? '',
+      c.ai_score_pre_rerank ?? '', esc(c.ai_rerank_reason || ''),
+      c._used_deep_eval ? 'YES' : '', esc(c._source || (c.houjin_bangou ? 'houjin' : 'brave')),
     ].join(','));
   });
   return lines.join('\n');
@@ -2518,6 +2532,103 @@ function exportSaved() {
   logAction('csv_export_saved', `${rows.length}件`);
   saveStore();
   downloadFile(`tell-saved-${Date.now()}.csv`, toCsv(rows));
+}
+
+/* ============ 反復発見: Top結果から類似企業を追加発見 ============ */
+async function discoverSimilarToTop() {
+  if (!state.icp || state.scored.length === 0) {
+    alert('先に商材を分析してください');
+    return;
+  }
+  const top = state.scored.filter(c => c.score >= 70).slice(0, 5);
+  if (top.length === 0) {
+    alert('適合度70+の企業がありません。もう一度検索してください');
+    return;
+  }
+  const productText = document.getElementById('product-input').value.trim();
+  if (!productText) return;
+  if (isBillingCapped()) { alert('月額利用上限到達'); return; }
+  const btn = document.getElementById('discover-similar-btn');
+  const origLabel = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '🔁 類似発見中…'; }
+  const progEl = document.getElementById('discovery-progress');
+  if (progEl) {
+    progEl.hidden = false;
+    progEl.classList.remove('done', 'error');
+    progEl.textContent = `🔁 Top${top.length}社に類似する企業を探索中…`;
+  }
+  try {
+    // AIに「これらの会社に似た会社を探すクエリ」を生成させる
+    const sys = `あなたはB2Bリードジェネレーションの専門家です。
+ユーザーが高評価した既存企業群の共通パターンを分析し、似た企業を新たに発見するための検索クエリを生成します。`;
+    const profileList = top.map((c, i) =>
+      `${i+1}. ${c.name} / ${c.industry||'?'} / ${c.prefecture||'?'}${c.city||''} / ${c.employees||'?'}名 / ${c.ai_fit_evidence||c.description?.slice(0,80)||'?'}`
+    ).join('\n');
+    const prompt = `# 商材
+${productText}
+
+# 高評価された既存企業 (これらの「類型」を探す)
+${profileList}
+
+# タスク
+上記企業の共通項を分析し、同じような特徴を持つ「まだ未発見の」企業を Brave Search で見つけるためのクエリを10個生成。
+- 上記企業の業種・地域・規模パターンに合うクエリ
+- 共通する課題/シグナルを反映したクエリ
+- すでに発見された会社名は除外する旨を含める
+
+JSONのみで返答:
+["クエリ1", "クエリ2", ...]`;
+
+    const text = await callClaude({
+      system: sys, prompt,
+      model: 'claude-opus-4-7',
+      max_tokens: 2000,
+      thinking: { type: 'enabled', budget_tokens: 4000 },
+      temperature: 1.0,
+    });
+    incrementUsage('ai', 3);
+    const m = text.match(/\[[\s\S]*?\]/);
+    if (!m) throw new Error('クエリ生成失敗');
+    const queries = JSON.parse(m[0]);
+    if (!Array.isArray(queries) || queries.length === 0) throw new Error('クエリ生成失敗');
+
+    // 通常のディスカバリーパイプラインに投入
+    const found = await discoverFromBrave(productText, state.icp, msg => {
+      if (progEl) progEl.textContent = `🔁 ${msg}`;
+    }, { queries: queries.slice(0, 10), maxQueries: 10 });
+
+    if (progEl) {
+      progEl.classList.add('done');
+      progEl.textContent = `✓ 類似発見完了: ${found.length}社追加`;
+    }
+  } catch (e) {
+    console.error(e);
+    if (progEl) {
+      progEl.classList.add('error');
+      progEl.textContent = `類似発見失敗: ${e.message}`;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
+  }
+}
+
+/* ============ 品質サマリーパネル ============ */
+function renderQualitySummary(filteredList) {
+  const panel = document.getElementById('quality-summary');
+  if (!panel) return;
+  const list = filteredList || [];
+  if (list.length === 0) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setText('qs-total', list.length);
+  setText('qs-high', list.filter(c => c.score >= 80).length);
+  setText('qs-mid', list.filter(c => c.score >= 50 && c.score < 80).length);
+  setText('qs-comp', list.filter(c => c.is_competitor).length);
+  setText('qs-houjin', list.filter(c => c.houjin_bangou).length);
+  setText('qs-active', list.filter(c => c.activeness === 'active').length);
+  setText('qs-deep', list.filter(c => c._used_deep_eval).length);
+  const avg = list.length > 0 ? Math.round(list.reduce((s, c) => s + (c.score||0), 0) / list.length) : 0;
+  setText('qs-avg', avg);
 }
 
 /* ============ スコア詳細モーダル ============ */
@@ -5556,6 +5667,8 @@ async function init() {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', renderResults);
   });
+  const dsBtn = document.getElementById('discover-similar-btn');
+  if (dsBtn) dsBtn.addEventListener('click', discoverSimilarToTop);
 
   // 地域選択モーダル
   const rsBtn = document.getElementById('region-select-btn');

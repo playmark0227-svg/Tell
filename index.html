@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515d">
+<link rel="stylesheet" href="style.css?v=20260515e">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -364,7 +364,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515d</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515e</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -614,9 +614,20 @@ service cloud.firestore {
     <div class="results-header">
       <h2 style="margin:0;">5. 結果 <span id="result-count" class="muted"></span></h2>
       <div class="results-actions">
-        <button id="export-results-inline" class="ghost small">📥 表示中をCSV出力</button>
+        <button id="discover-similar-btn" class="ghost small" title="現在Top5に似た企業を追加発見">🔁 類似企業を追加発見</button>
+        <button id="export-results-inline" class="ghost small">📥 表示中をCSV出力(全項目)</button>
         <button id="export-saved-inline" class="ghost small">⭐ 保存リストをCSV出力</button>
       </div>
+    </div>
+    <div id="quality-summary" class="quality-summary" style="display:none">
+      <div class="qs-stat"><div class="qs-num" id="qs-total">0</div><div class="qs-lbl">総数</div></div>
+      <div class="qs-stat"><div class="qs-num good" id="qs-high">0</div><div class="qs-lbl">高適合(80+)</div></div>
+      <div class="qs-stat"><div class="qs-num" id="qs-mid">0</div><div class="qs-lbl">中適合(50-79)</div></div>
+      <div class="qs-stat"><div class="qs-num warn" id="qs-comp">0</div><div class="qs-lbl">競合</div></div>
+      <div class="qs-stat"><div class="qs-num" id="qs-houjin">0</div><div class="qs-lbl">🆔法人番号</div></div>
+      <div class="qs-stat"><div class="qs-num good" id="qs-active">0</div><div class="qs-lbl">⚡アクティブ</div></div>
+      <div class="qs-stat"><div class="qs-num" id="qs-deep">0</div><div class="qs-lbl">🧠Deep評価</div></div>
+      <div class="qs-stat"><div class="qs-num" id="qs-avg">0</div><div class="qs-lbl">平均適合度</div></div>
     </div>
     <div class="view-tabs" id="view-tabs">
       <button class="view-tab active" data-view="all">📋 全て</button>
@@ -851,9 +862,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515d"></script>
-<script type="module" src="firebase-sync.js?v=20260515d"></script>
-<script src="data/regions.js?v=20260515d"></script>
-<script src="app.js?v=20260515d"></script>
+<script src="firebase-config.js?v=20260515e"></script>
+<script type="module" src="firebase-sync.js?v=20260515e"></script>
+<script src="data/regions.js?v=20260515e"></script>
+<script src="app.js?v=20260515e"></script>
 </body>
 </html>
