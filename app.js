@@ -2450,6 +2450,16 @@ function applyFilters() {
     .filter(c => !store.opts.savedOnly || store.saved.has(c.id))
     .filter(c => !search || c.name.toLowerCase().includes(search) || (c.phone || '').includes(search))
     .filter(c => {
+      // Phase10 拡張フィルタ
+      const minSc = parseInt(document.getElementById('filter-min-score')?.value || '0', 10);
+      if (c.score < minSc) return false;
+      if (document.getElementById('filter-no-competitor')?.checked && c.is_competitor) return false;
+      if (document.getElementById('filter-active-only')?.checked && c.activeness === 'inactive') return false;
+      if (document.getElementById('filter-deep-only')?.checked && !c._used_deep_eval) return false;
+      if (document.getElementById('filter-houjin-only')?.checked && !c.houjin_bangou) return false;
+      return true;
+    })
+    .filter(c => {
       if (state.view === 'with_phone') return hasPhone(c);
       if (state.view === 'without_phone') return !hasPhone(c);
       if (state.view === 'saved') return store.saved.has(c.id);
@@ -4907,8 +4917,37 @@ async function runPipeline(input, options = {}) {
       const found = await discoverFromBrave(input, state.icp, msg => {
         progEl.textContent = msg;
       }, customQueries ? { queries: customQueries, maxQueries: maxQs } : {});
+      // 国税庁API補助発見 (品質モード + 地域指定時のみ)
+      let houjinFound = [];
+      if (store.opts.qualityMode !== false && (prefList.length > 0 || cityList.length > 0)) {
+        try {
+          progEl.textContent = `🏛 国税庁ベースで補助発見を開始…`;
+          const houjinCandidates = await discoverViaHoujinBangou(input, state.icp, msg => {
+            progEl.textContent = msg;
+          });
+          // 既存の発見企業と重複する法人番号を除外
+          const existingBangous = new Set([...store.importedCompanies, ...store.customCompanies]
+            .map(c => c.houjin_bangou).filter(Boolean));
+          const dedupedCandidates = houjinCandidates.filter(c =>
+            !c.houjin_bangou || !existingBangous.has(c.houjin_bangou));
+          if (dedupedCandidates.length > 0) {
+            // HP取得 + パイプライン投入 (最大40社まで)
+            const limit = Math.min(40, dedupedCandidates.length);
+            houjinFound = await enrichHoujinCandidatesWithHP(dedupedCandidates.slice(0, limit), input, msg => {
+              progEl.textContent = msg;
+            });
+            if (houjinFound.length > 0) {
+              store.importedCompanies.push(...houjinFound);
+              saveStore();
+              // 通常のAIスコアリングは後続の batchScoreExisting に任せる
+            }
+          }
+        } catch (e) {
+          console.warn('houjin discovery failed', e);
+        }
+      }
       progEl.classList.add('done');
-      progEl.textContent = `✓ ${found.length}社の新規企業を発見しました${found.length === 0 ? '（既存と重複した可能性あり）' : ''}`;
+      progEl.textContent = `✓ ${found.length}社(Brave) + ${houjinFound.length}社(国税庁) = 計${found.length + houjinFound.length}社の新規企業を発見`;
     } catch (e) {
       console.error('discover error:', e);
       progEl.classList.add('error');
@@ -5335,6 +5374,20 @@ async function init() {
   });
 
   ['filter-industry', 'filter-size'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', renderResults);
+  });
+  // Phase10 拡張フィルタ
+  const minScoreEl = document.getElementById('filter-min-score');
+  if (minScoreEl) {
+    const updateLabel = () => {
+      const v = document.getElementById('filter-min-score-val');
+      if (v) v.textContent = minScoreEl.value;
+      renderResults();
+    };
+    minScoreEl.addEventListener('input', updateLabel);
+  }
+  ['filter-no-competitor', 'filter-active-only', 'filter-deep-only', 'filter-houjin-only'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', renderResults);
   });

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515b">
+<link rel="stylesheet" href="style.css?v=20260515c">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -364,7 +364,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515b</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515c</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -624,6 +624,29 @@ service cloud.firestore {
       <button class="view-tab" data-view="without_phone">🌐 電話なし（HPのみ）</button>
       <button class="view-tab" data-view="saved">⭐ 保存</button>
     </div>
+    <div style="display:flex;gap:12px;align-items:center;padding:8px 0;font-size:13px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:8px">
+      <label style="display:flex;align-items:center;gap:6px" title="この適合度以上のみ表示">
+        最低適合度:
+        <input type="range" id="filter-min-score" min="0" max="100" value="0" step="5" style="width:120px">
+        <span id="filter-min-score-val" style="min-width:30px">0</span>+
+      </label>
+      <label style="display:flex;align-items:center;gap:6px" title="競合企業を除外して表示">
+        <input type="checkbox" id="filter-no-competitor" checked>
+        <span>⛔ 競合除外</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px" title="HP更新が無く活動停止っぽい企業を除外">
+        <input type="checkbox" id="filter-active-only">
+        <span>⚡ アクティブのみ</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px" title="Opus 拡張思考で深く評価された企業のみ">
+        <input type="checkbox" id="filter-deep-only">
+        <span>🧠 Deep評価のみ</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px" title="国税庁API で実在確認済みのみ">
+        <input type="checkbox" id="filter-houjin-only">
+        <span>🆔 法人番号あり</span>
+      </label>
+    </div>
     <div class="table-wrap">
       <table id="results-table">
         <thead>
@@ -812,9 +835,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515b"></script>
-<script type="module" src="firebase-sync.js?v=20260515b"></script>
-<script src="data/regions.js?v=20260515b"></script>
-<script src="app.js?v=20260515b"></script>
+<script src="firebase-config.js?v=20260515c"></script>
+<script type="module" src="firebase-sync.js?v=20260515c"></script>
+<script src="data/regions.js?v=20260515c"></script>
+<script src="app.js?v=20260515c"></script>
 </body>
 </html>
