@@ -50,6 +50,35 @@ if (!cfg || /PLACEHOLDER/.test(cfg.apiKey || '')) {
         snap.forEach(d => arr.push({ uid: d.id, ...d.data() }));
         return arr;
       },
+      // システム設定 (全ユーザー共通の Worker URL / モデル / 課金単価 等)
+      // public_config: 全ユーザー読み取り可
+      loadPublicConfig: async () => {
+        const snap = await getDoc(doc(db, 'system', 'public_config'));
+        return snap.exists() ? snap.data() : null;
+      },
+      savePublicConfig: async (data) => {
+        await setDoc(doc(db, 'system', 'public_config'), {
+          ...data, _updatedAt: serverTimestamp(),
+        }, { merge: true });
+      },
+      // admin_config: 管理者のみ読み書き可 (APIキー等の機微情報)
+      loadAdminConfig: async () => {
+        const snap = await getDoc(doc(db, 'system', 'admin_config'));
+        return snap.exists() ? snap.data() : null;
+      },
+      saveAdminConfig: async (data) => {
+        await setDoc(doc(db, 'system', 'admin_config'), {
+          ...data, _updatedAt: serverTimestamp(),
+        }, { merge: true });
+      },
+      // 個別ユーザーを無効化 (管理者用)
+      setUserDisabled: async (uid, disabled, reason = '') => {
+        await setDoc(doc(db, 'user_state', uid), {
+          _disabled: disabled,
+          _disabledAt: disabled ? serverTimestamp() : null,
+          _disabledReason: reason,
+        }, { merge: true });
+      },
     };
     // 起動完了通知 (app.js が listen している)
     window.dispatchEvent(new CustomEvent('firebase-ready'));

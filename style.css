@@ -1029,6 +1029,27 @@ footer a { color: var(--accent); }
 
 .modal-content.wide { max-width: 720px; }
 
+/* マスター管理: タブ */
+.master-tab {
+  background: transparent; border: none; padding: 8px 14px;
+  cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500;
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: all .15s;
+}
+.master-tab:hover { color: var(--text); }
+.master-tab.active {
+  color: var(--accent); border-bottom-color: var(--accent);
+}
+.master-pane h4 { margin: 0 0 10px 0; font-size: 14px; font-weight: 600; }
+.master-pane[hidden] { display: none !important; }
+
+/* SaaS モード: 「管理者が設定済み」表示 */
+.system-managed-note {
+  background: var(--bg); padding: 10px; border-radius: 6px;
+  font-size: 12px; color: var(--muted); text-align: center;
+  border: 1px dashed var(--border);
+}
+
 .modal-content h3 { margin: 0 0 14px 0; font-size: 16px; font-weight: 600; }
 
 .modal-content pre {

@@ -1423,6 +1423,12 @@ async function onFirebaseSignedIn(user) {
   try {
     const remote = await window.firebaseApi.loadUserState(user.uid);
     if (remote) {
+      // 無効化チェック
+      if (remote._disabled === true) {
+        alert(`このアカウントは無効化されています。\n${remote._disabledReason ? '理由: ' + remote._disabledReason : ''}\n\n管理者にお問い合わせください。`);
+        try { await window.firebaseApi.signOut(); } catch {}
+        return;
+      }
       await applyFirebaseUserState(remote);
     } else {
       // 初回ログイン: 既存のローカル state を初期データとしてpush
@@ -1431,6 +1437,8 @@ async function onFirebaseSignedIn(user) {
   } catch (e) {
     console.warn('[firebase] initial load failed', e);
   }
+  // システム設定(Worker URL/APIキー)を読込・適用
+  await loadAndApplySystemConfig();
   // UI再描画
   renderAll();
 }
@@ -1683,20 +1691,260 @@ function exportBillingReportCsv(allMonths = false) {
 }
 
 function setupBillingReportModal() {
-  const openBtn = document.getElementById('open-billing-report');
-  const closeBtn = document.getElementById('report-close');
+  // 請求額レポートはマスター管理モーダル内のタブに統合。
+  // ボタンハンドラ等は setupMasterAdminModal() で配線。
   const refreshBtn = document.getElementById('report-refresh');
   const csvBtn = document.getElementById('report-export-csv');
   const csvAllBtn = document.getElementById('report-export-csv-all');
   const monthSel = document.getElementById('report-month-filter');
-  const modal = document.getElementById('billing-report-modal');
-  if (openBtn) openBtn.addEventListener('click', openBillingReport);
-  if (closeBtn) closeBtn.addEventListener('click', () => { modal.hidden = true; });
   if (refreshBtn) refreshBtn.addEventListener('click', refreshBillingReport);
   if (csvBtn) csvBtn.addEventListener('click', () => exportBillingReportCsv(false));
   if (csvAllBtn) csvAllBtn.addEventListener('click', () => exportBillingReportCsv(true));
   if (monthSel) monthSel.addEventListener('change', () => renderBillingReportTable(monthSel.value));
+}
+
+/* ============ マスター管理モーダル ============ */
+let _systemPublicConfig = null;
+let _systemAdminConfig = null;
+
+async function loadAndApplySystemConfig() {
+  if (!window.firebaseApi) return;
+  try {
+    const pub = await window.firebaseApi.loadPublicConfig();
+    if (pub) {
+      _systemPublicConfig = pub;
+      // 全ユーザーに自動適用
+      if (pub.workerUrl) store.opts.braveProxy = pub.workerUrl;
+      if (pub.aiModel) store.opts.aiModel = pub.aiModel;
+      if (typeof pub.defaultBravePages === 'number') store.opts.bravePages = pub.defaultBravePages;
+      if (pub.billingConfig) store.billingConfig = pub.billingConfig;
+      // UIの値を反映
+      const braveInput = document.getElementById('opt-brave-input');
+      if (braveInput) braveInput.value = pub.workerUrl || '';
+      const aiModel = document.getElementById('opt-ai-model');
+      if (aiModel) aiModel.value = pub.aiModel || 'claude-haiku-4-5-20251001';
+      // ユーザー側のBrave/AIセクションを「管理者が設定済み」表示に
+      applySystemManagedUI();
+    }
+  } catch (e) {
+    console.warn('[system_config] load failed (Firestore Rules で許可されていない可能性)', e);
+  }
+  // 管理者なら admin_config も読む(APIキー入力欄表示用)
+  if (isAdminUser()) {
+    try {
+      _systemAdminConfig = await window.firebaseApi.loadAdminConfig();
+      if (_systemAdminConfig && _systemAdminConfig.anthropicKey) {
+        store.opts.aiKey = _systemAdminConfig.anthropicKey;
+      }
+    } catch (e) {
+      console.warn('[admin_config] load failed', e);
+    }
+  }
+}
+
+function applySystemManagedUI() {
+  // SaaSモードでは API キーや Worker URL は管理者が設定済みなので、
+  // ユーザー側のセクションを情報表示のみに切り替える
+  if (!_systemPublicConfig || !_systemPublicConfig.workerUrl) return;
+  if (isAdminUser()) return; // 管理者は両方見える
+  const braveSec = document.getElementById('user-brave-section');
+  const aiSec = document.getElementById('user-ai-section');
+  const note = '<div class="system-managed-note">✓ システム管理者が設定済み<br>追加の設定は不要です</div>';
+  if (braveSec) {
+    const body = braveSec.querySelector('.side-body');
+    if (body && !body.dataset.systemManaged) {
+      body.dataset.systemManaged = '1';
+      body.innerHTML = note;
+    }
+  }
+  if (aiSec) {
+    const body = aiSec.querySelector('.side-body');
+    if (body && !body.dataset.systemManaged) {
+      body.dataset.systemManaged = '1';
+      body.innerHTML = note;
+    }
+  }
+}
+
+function setupMasterAdminModal() {
+  const modal = document.getElementById('master-admin-modal');
+  const openBtn = document.getElementById('open-master-admin');
+  const closeBtn = document.getElementById('master-close');
+  if (openBtn) openBtn.addEventListener('click', () => openMasterAdmin());
+  if (closeBtn) closeBtn.addEventListener('click', () => { modal.hidden = true; });
   if (modal) modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+  // タブ切替
+  document.querySelectorAll('.master-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchMasterTab(btn.dataset.tab));
+  });
+  // 接続設定 保存
+  const connSave = document.getElementById('ma-conn-save');
+  if (connSave) connSave.addEventListener('click', saveConnectionConfig);
+  // APIキー 保存
+  const keysSave = document.getElementById('ma-keys-save');
+  if (keysSave) keysSave.addEventListener('click', saveApiKeysConfig);
+  // ユーザー一覧更新
+  const usersRefresh = document.getElementById('users-refresh');
+  if (usersRefresh) usersRefresh.addEventListener('click', refreshUsersList);
+}
+
+function switchMasterTab(tab) {
+  document.querySelectorAll('.master-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll('.master-pane').forEach(p => {
+    p.hidden = (p.dataset.pane !== tab);
+  });
+  // タブごとの初期化
+  if (tab === 'billing-report' && !_billingReportCache) {
+    refreshBillingReport();
+  } else if (tab === 'users') {
+    refreshUsersList();
+  } else if (tab === 'system') {
+    renderSystemInfo();
+  }
+}
+
+async function openMasterAdmin() {
+  if (!isAdminUser()) { alert('管理者のみ閲覧可能です'); return; }
+  // 既存値で各タブを初期化
+  const cfg = getBillingConfig();
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  // 接続設定
+  setVal('ma-worker-url', (_systemPublicConfig && _systemPublicConfig.workerUrl) || store.opts.braveProxy || '');
+  setVal('ma-ai-model', (_systemPublicConfig && _systemPublicConfig.aiModel) || store.opts.aiModel || 'claude-haiku-4-5-20251001');
+  setVal('ma-default-pages', (_systemPublicConfig && _systemPublicConfig.defaultBravePages) || 2);
+  // APIキー
+  setVal('ma-anthropic-key', (_systemAdminConfig && _systemAdminConfig.anthropicKey) || '');
+  setVal('ma-brave-key', (_systemAdminConfig && _systemAdminConfig.braveKey) || '');
+  // 課金単価
+  setVal('price-base', cfg.baseMonthly);
+  setVal('price-search', cfg.perSearch);
+  setVal('price-ai', cfg.perAiEvaluation);
+  setVal('price-fetch', cfg.perHpFetch);
+  setVal('price-cap', cfg.monthlyCap || 0);
+  const hardCb = document.getElementById('price-hard-cap');
+  if (hardCb) hardCb.checked = cfg.hardCap !== false;
+
+  document.getElementById('master-admin-modal').hidden = false;
+  switchMasterTab('connection');
+}
+
+async function saveConnectionConfig() {
+  const status = document.getElementById('ma-conn-status');
+  if (!window.firebaseApi) { status.textContent = 'Firebase未設定'; return; }
+  const cfg = {
+    workerUrl: document.getElementById('ma-worker-url').value.trim(),
+    aiModel: document.getElementById('ma-ai-model').value,
+    defaultBravePages: parseInt(document.getElementById('ma-default-pages').value, 10) || 2,
+    billingConfig: getBillingConfig(),
+  };
+  try {
+    await window.firebaseApi.savePublicConfig(cfg);
+    _systemPublicConfig = { ..._systemPublicConfig, ...cfg };
+    // 自分にも反映
+    if (cfg.workerUrl) store.opts.braveProxy = cfg.workerUrl;
+    if (cfg.aiModel) store.opts.aiModel = cfg.aiModel;
+    if (cfg.defaultBravePages) store.opts.bravePages = cfg.defaultBravePages;
+    saveStore();
+    logAction('system_public_config_saved', JSON.stringify(cfg));
+    status.style.color = 'var(--good)';
+    status.textContent = `✓ 全ユーザーに配信完了 (${new Date().toLocaleString('ja-JP')})`;
+    setTimeout(() => { status.textContent = ''; }, 5000);
+  } catch (e) {
+    status.style.color = 'var(--danger)';
+    status.textContent = `失敗: ${e.message.slice(0, 100)}`;
+  }
+}
+
+async function saveApiKeysConfig() {
+  const status = document.getElementById('ma-keys-status');
+  if (!window.firebaseApi) { status.textContent = 'Firebase未設定'; return; }
+  const cfg = {
+    anthropicKey: document.getElementById('ma-anthropic-key').value.trim(),
+    braveKey: document.getElementById('ma-brave-key').value.trim(),
+  };
+  try {
+    await window.firebaseApi.saveAdminConfig(cfg);
+    _systemAdminConfig = { ..._systemAdminConfig, ...cfg };
+    // 自分にも反映
+    if (cfg.anthropicKey) store.opts.aiKey = cfg.anthropicKey;
+    if (cfg.braveKey) store.opts.braveKey = cfg.braveKey;
+    saveStore();
+    logAction('system_admin_config_saved', 'APIキー更新');
+    status.style.color = 'var(--good)';
+    status.textContent = `✓ 保存完了 (${new Date().toLocaleString('ja-JP')})`;
+    setTimeout(() => { status.textContent = ''; }, 5000);
+  } catch (e) {
+    status.style.color = 'var(--danger)';
+    status.textContent = `失敗: ${e.message.slice(0, 100)}`;
+  }
+}
+
+async function refreshUsersList() {
+  const status = document.getElementById('users-status');
+  const tbody = document.getElementById('users-tbody');
+  if (!window.firebaseApi) { status.textContent = 'Firebase未設定'; return; }
+  status.textContent = '読込中…';
+  try {
+    if (!_billingReportCache) {
+      _billingReportCache = await window.firebaseApi.listAllUserStates();
+    }
+    const cfg = getBillingConfig();
+    const ym = currentYM();
+    const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+    const rows = (_billingReportCache || []).map(u => {
+      const bill = calcUserBillForMonth(u, ym, cfg);
+      const companies = (u.importedCompanies?.length || 0) + (u.customCompanies?.length || 0);
+      const updated = u._updatedAt?.toDate ? u._updatedAt.toDate().toLocaleString('ja-JP') : '-';
+      const disabled = u._disabled === true;
+      return `
+        <tr style="border-bottom:1px solid var(--border)${disabled ? ';opacity:0.5' : ''}">
+          <td style="padding:6px">${u._email || '(不明)'}</td>
+          <td style="text-align:right;padding:6px">${bill ? yen(bill.total) : '-'}</td>
+          <td style="text-align:right;padding:6px">${companies.toLocaleString()}</td>
+          <td style="text-align:right;padding:6px;font-size:11px;color:var(--muted)">${updated}</td>
+          <td style="text-align:center;padding:6px">${disabled ? '<span style="color:var(--danger)">無効</span>' : '<span style="color:var(--good)">有効</span>'}</td>
+          <td style="text-align:center;padding:6px">
+            <button class="user-toggle-btn" data-uid="${u.uid}" data-disabled="${disabled ? '1' : '0'}" style="font-size:11px;padding:4px 8px">${disabled ? '有効化' : '無効化'}</button>
+          </td>
+        </tr>
+      `;
+    });
+    tbody.innerHTML = rows.length === 0
+      ? `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">ユーザーなし</td></tr>`
+      : rows.join('');
+    // 無効化/有効化ボタン
+    tbody.querySelectorAll('.user-toggle-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const uid = btn.dataset.uid;
+        const disabled = btn.dataset.disabled === '1';
+        const newState = !disabled;
+        if (!confirm(newState ? 'このユーザーを無効化しますか？\n(アプリ起動時に弾かれます)' : 'このユーザーを有効化しますか？')) return;
+        const reason = newState ? (prompt('無効化の理由(任意):', '') || '') : '';
+        try {
+          await window.firebaseApi.setUserDisabled(uid, newState, reason);
+          logAction(newState ? 'user_disabled' : 'user_enabled', uid);
+          _billingReportCache = null;
+          refreshUsersList();
+        } catch (e) {
+          alert(`失敗: ${e.message}`);
+        }
+      });
+    });
+    status.textContent = `${_billingReportCache.length}ユーザー`;
+  } catch (e) {
+    status.textContent = `取得失敗: ${e.message.slice(0, 80)}`;
+  }
+}
+
+function renderSystemInfo() {
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setText('sys-firebase', window.FIREBASE_READY ? '✓ 接続中' : '✗ 未設定');
+  setText('sys-project', (window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId) || '-');
+  setText('sys-user', _currentFbUser ? _currentFbUser.email : '未ログイン');
+  setText('sys-role', isAdminUser() ? '管理者' : (_currentFbUser ? '一般ユーザー' : '-'));
+  setText('sys-tos', store.tosAcceptedAt ? new Date(store.tosAcceptedAt).toLocaleString('ja-JP') : '未同意');
 }
 
 /* ============ 管理者: 課金設定パネル ============ */
@@ -1711,7 +1959,7 @@ function setupAdminPanel() {
   const hardCb = document.getElementById('price-hard-cap');
   if (hardCb) hardCb.checked = cfg.hardCap !== false;
   const saveBtn = document.getElementById('price-save');
-  if (saveBtn) saveBtn.addEventListener('click', () => {
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
     const newCfg = {
       baseMonthly: Math.max(0, parseFloat(document.getElementById('price-base').value) || 0),
       perSearch: Math.max(0, parseFloat(document.getElementById('price-search').value) || 0),
@@ -1725,9 +1973,25 @@ function setupAdminPanel() {
     saveStore();
     renderBillingPanel();
     const status = document.getElementById('price-status');
+    // 全ユーザー共通設定として Firestore にも push
+    if (window.firebaseApi && isAdminUser()) {
+      try {
+        await window.firebaseApi.savePublicConfig({
+          ...(_systemPublicConfig || {}),
+          billingConfig: newCfg,
+        });
+        _systemPublicConfig = { ...(_systemPublicConfig || {}), billingConfig: newCfg };
+      } catch (e) {
+        if (status) {
+          status.style.color = 'var(--danger)';
+          status.textContent = `Firestore保存失敗: ${e.message.slice(0, 80)}`;
+        }
+        return;
+      }
+    }
     if (status) {
       status.style.color = 'var(--good)';
-      status.textContent = `✓ 保存しました (${new Date().toLocaleString('ja-JP')})`;
+      status.textContent = `✓ 全ユーザーに保存しました (${new Date().toLocaleString('ja-JP')})`;
       setTimeout(() => { status.textContent = ''; }, 4000);
     }
   });
@@ -3891,6 +4155,7 @@ async function init() {
   setupLoginModal();
   setupAdminPanel();
   setupBillingReportModal();
+  setupMasterAdminModal();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {

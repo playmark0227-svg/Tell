@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260514s">
+<link rel="stylesheet" href="style.css?v=20260514t">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -131,7 +131,7 @@
     </div>
   </div>
 
-  <div class="sidebar-section collapsible" data-open="true">
+  <div class="sidebar-section collapsible" data-open="true" id="user-brave-section">
     <div class="side-head"><span>🌐 ウェブ検索（Brave）</span><span class="badge" id="badge-brave">OFF</span></div>
     <div class="side-body">
       <label class="side-label">Worker URL または APIキー</label>
@@ -145,7 +145,7 @@
     </div>
   </div>
 
-  <div class="sidebar-section collapsible" data-open="false">
+  <div class="sidebar-section collapsible" data-open="false" id="user-ai-section">
     <div class="side-head"><span>🤖 AI設定（Claude API）</span><span class="badge" id="badge-ai">OFF</span></div>
     <div class="side-body">
       <label class="kv"><span>AIモードを使用</span>
@@ -192,75 +192,207 @@
     </div>
   </div>
 
-  <div class="sidebar-section collapsible" data-open="false" id="admin-section" style="display:none">
-    <div class="side-head"><span>🔧 管理者: 課金設定</span></div>
+  <div class="sidebar-section collapsible" data-open="true" id="admin-section" style="display:none">
+    <div class="side-head"><span>🔧 マスター管理</span></div>
     <div class="side-body">
-      <label class="kv" style="flex-direction:column;align-items:stretch"><span>月額基本料金(円)</span>
-        <input type="number" id="price-base" min="0" step="1000" value="50000">
-      </label>
-      <label class="kv" style="flex-direction:column;align-items:stretch"><span>Web検索 単価(円/1クエリ)</span>
-        <input type="number" id="price-search" min="0" step="0.01" value="0.5">
-      </label>
-      <label class="kv" style="flex-direction:column;align-items:stretch"><span>AI評価 単価(円/1社)</span>
-        <input type="number" id="price-ai" min="0" step="0.01" value="2">
-      </label>
-      <label class="kv" style="flex-direction:column;align-items:stretch"><span>HP取得 単価(円/1URL)</span>
-        <input type="number" id="price-fetch" min="0" step="0.01" value="0.1">
-      </label>
-      <label class="kv" style="flex-direction:column;align-items:stretch"><span>月額利用上限(円, 0=無制限)</span>
-        <input type="number" id="price-cap" min="0" step="1000" value="0">
-      </label>
-      <label class="kv"><span>上限到達で検索停止</span>
-        <input type="checkbox" id="price-hard-cap" checked>
-      </label>
-      <button class="side-btn" id="price-save" style="margin-top:8px">課金設定を保存</button>
-      <div id="price-status" class="muted" style="font-size:11px;margin-top:4px"></div>
-      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
-      <button class="side-btn" id="open-billing-report">📊 全ユーザー請求額一覧を表示</button>
-      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
-      <div style="font-size:11px;color:var(--muted)">※ 設定は全ユーザー共通で適用されます。<br>※ <code>firebase-config.js</code> の <code>ADMIN_EMAILS</code> に登録された<br>メールアドレスでのみ表示されます。</div>
+      <button class="side-btn" id="open-master-admin" style="background:var(--accent);color:#fff;font-weight:600">⚙ マスター管理画面を開く</button>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5">
+        APIキー・課金単価・ユーザー管理・請求額一覧を一画面で操作できます。<br>※ <code>ADMIN_EMAILS</code> に登録された方のみ表示。
+      </div>
     </div>
   </div>
 
-  <div id="billing-report-modal" class="modal" hidden>
-    <div class="modal-content wide" style="max-width:90vw">
-      <h3>📊 全ユーザー請求額一覧</h3>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-        <label>対象月:
-          <select id="report-month-filter" style="margin-left:6px"></select>
-        </label>
-        <button id="report-refresh">🔄 更新</button>
-        <button id="report-export-csv">📥 CSV出力(請求書作成用)</button>
-        <button id="report-export-csv-all">📥 全月CSV出力</button>
-        <div id="report-status" class="muted" style="font-size:12px;margin-left:auto"></div>
+  <div id="master-admin-modal" class="modal" hidden>
+    <div class="modal-content wide" style="max-width:1100px;max-height:90vh;display:flex;flex-direction:column">
+      <h3 style="margin-bottom:8px">🔧 マスター管理画面</h3>
+      <div id="master-tabs" style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:12px;flex-wrap:wrap">
+        <button class="master-tab active" data-tab="connection">🌐 接続設定</button>
+        <button class="master-tab" data-tab="apikeys">🔑 APIキー</button>
+        <button class="master-tab" data-tab="pricing">💴 課金単価</button>
+        <button class="master-tab" data-tab="users">👥 ユーザー管理</button>
+        <button class="master-tab" data-tab="billing-report">📊 請求額一覧</button>
+        <button class="master-tab" data-tab="system">ℹ システム情報</button>
       </div>
-      <div style="max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:6px">
-        <table id="report-table" style="width:100%;font-size:13px;border-collapse:collapse">
-          <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
-            <tr style="border-bottom:2px solid var(--border)">
-              <th style="text-align:left;padding:6px">メールアドレス</th>
-              <th style="text-align:right;padding:6px">検索数</th>
-              <th style="text-align:right;padding:6px">AI評価</th>
-              <th style="text-align:right;padding:6px">HP取得</th>
-              <th style="text-align:right;padding:6px">基本</th>
-              <th style="text-align:right;padding:6px">従量</th>
-              <th style="text-align:right;padding:6px;color:var(--accent)">請求額</th>
-              <th style="text-align:right;padding:6px">最終更新</th>
-            </tr>
-          </thead>
-          <tbody id="report-tbody"></tbody>
-          <tfoot>
-            <tr style="border-top:2px solid var(--border);font-weight:600;background:var(--bg)">
-              <td style="padding:6px">合計</td>
-              <td colspan="5"></td>
-              <td style="text-align:right;padding:6px;color:var(--accent)" id="report-grand-total">¥0</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
+      <div style="flex:1;overflow:auto">
+
+        <!-- Tab: 接続設定 -->
+        <div class="master-pane" data-pane="connection">
+          <h4>🌐 接続設定 (全ユーザーに自動配信)</h4>
+          <p class="muted" style="font-size:12px">これらの設定はログインした全ユーザーのアプリに自動反映されます。ユーザー側での設定は不要になります。</p>
+          <label class="kv" style="flex-direction:column;align-items:stretch;margin-top:12px"><span>Cloudflare Worker URL (プロキシ)</span>
+            <input type="text" id="ma-worker-url" placeholder="https://xxx.workers.dev" style="font-family:monospace">
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>デフォルトAIモデル</span>
+            <select id="ma-ai-model">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価）推奨</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6（バランス）</option>
+              <option value="claude-opus-4-7">Opus 4.7（高精度・高コスト）</option>
+            </select>
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>デフォルト検索取得ページ数</span>
+            <select id="ma-default-pages">
+              <option value="1">1ページ (高速・少量)</option>
+              <option value="2" selected>2ページ (推奨)</option>
+              <option value="3">3ページ</option>
+              <option value="4">4ページ (中小企業まで)</option>
+            </select>
+          </label>
+          <button class="side-btn" id="ma-conn-save" style="margin-top:12px;background:var(--accent);color:#fff">この接続設定を全ユーザーに配信</button>
+          <div id="ma-conn-status" class="muted" style="font-size:12px;margin-top:6px"></div>
+        </div>
+
+        <!-- Tab: APIキー -->
+        <div class="master-pane" data-pane="apikeys" hidden>
+          <h4>🔑 APIキー管理 (管理者のみ閲覧可)</h4>
+          <div style="background:var(--bg);padding:10px;border-radius:6px;border:1px solid var(--mid);font-size:12px;color:var(--mid);margin-bottom:12px">
+            ⚠️ <strong>推奨</strong>: APIキーは Cloudflare Worker の <code>wrangler secret put</code> で管理してください。<br>
+            ここで設定したキーは Firestore に保存されます。管理者以外は読めない設定ですが、Worker secrets の方がセキュア。
+          </div>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>Anthropic API Key</span>
+            <input type="password" id="ma-anthropic-key" placeholder="sk-ant-..." style="font-family:monospace">
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>Brave Search API Key</span>
+            <input type="password" id="ma-brave-key" placeholder="BSA..." style="font-family:monospace">
+          </label>
+          <button class="side-btn" id="ma-keys-save" style="margin-top:12px;background:var(--accent);color:#fff">APIキーを保存</button>
+          <div id="ma-keys-status" class="muted" style="font-size:12px;margin-top:6px"></div>
+          <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+          <h4 style="font-size:13px">📖 Cloudflare Worker での設定方法</h4>
+          <pre style="background:var(--bg);padding:8px;border-radius:6px;font-size:11px;overflow:auto">cd worker
+wrangler secret put ANTHROPIC_API_KEY
+wrangler secret put BRAVE_API_KEY
+wrangler deploy</pre>
+        </div>
+
+        <!-- Tab: 課金単価 -->
+        <div class="master-pane" data-pane="pricing" hidden>
+          <h4>💴 課金単価 (全ユーザー共通)</h4>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>月額基本料金(円)</span>
+            <input type="number" id="price-base" min="0" step="1000" value="50000">
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>Web検索 単価(円/1クエリ)</span>
+            <input type="number" id="price-search" min="0" step="0.01" value="0.5">
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>AI評価 単価(円/1社)</span>
+            <input type="number" id="price-ai" min="0" step="0.01" value="2">
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>HP取得 単価(円/1URL)</span>
+            <input type="number" id="price-fetch" min="0" step="0.01" value="0.1">
+          </label>
+          <label class="kv" style="flex-direction:column;align-items:stretch"><span>月額利用上限(円, 0=無制限)</span>
+            <input type="number" id="price-cap" min="0" step="1000" value="0">
+          </label>
+          <label class="kv"><span>上限到達で検索停止</span>
+            <input type="checkbox" id="price-hard-cap" checked>
+          </label>
+          <button class="side-btn" id="price-save" style="margin-top:12px;background:var(--accent);color:#fff">課金単価を保存</button>
+          <div id="price-status" class="muted" style="font-size:12px;margin-top:6px"></div>
+        </div>
+
+        <!-- Tab: ユーザー管理 -->
+        <div class="master-pane" data-pane="users" hidden>
+          <h4>👥 ユーザー管理</h4>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+            <button id="users-refresh">🔄 更新</button>
+            <div id="users-status" class="muted" style="font-size:12px"></div>
+          </div>
+          <div style="max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:6px">
+            <table style="width:100%;font-size:13px;border-collapse:collapse">
+              <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
+                <tr style="border-bottom:2px solid var(--border)">
+                  <th style="text-align:left;padding:6px">メール</th>
+                  <th style="text-align:right;padding:6px">今月使用額</th>
+                  <th style="text-align:right;padding:6px">企業数</th>
+                  <th style="text-align:right;padding:6px">最終更新</th>
+                  <th style="text-align:center;padding:6px">状態</th>
+                  <th style="text-align:center;padding:6px">操作</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab: 請求額一覧 -->
+        <div class="master-pane" data-pane="billing-report" hidden>
+          <h4>📊 全ユーザー請求額一覧</h4>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+            <label>対象月:
+              <select id="report-month-filter" style="margin-left:6px"></select>
+            </label>
+            <button id="report-refresh">🔄 更新</button>
+            <button id="report-export-csv">📥 CSV出力(請求書作成用)</button>
+            <button id="report-export-csv-all">📥 全月CSV出力</button>
+            <div id="report-status" class="muted" style="font-size:12px;margin-left:auto"></div>
+          </div>
+          <div style="max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:6px">
+            <table id="report-table" style="width:100%;font-size:13px;border-collapse:collapse">
+              <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
+                <tr style="border-bottom:2px solid var(--border)">
+                  <th style="text-align:left;padding:6px">メールアドレス</th>
+                  <th style="text-align:right;padding:6px">検索数</th>
+                  <th style="text-align:right;padding:6px">AI評価</th>
+                  <th style="text-align:right;padding:6px">HP取得</th>
+                  <th style="text-align:right;padding:6px">基本</th>
+                  <th style="text-align:right;padding:6px">従量</th>
+                  <th style="text-align:right;padding:6px;color:var(--accent)">請求額</th>
+                  <th style="text-align:right;padding:6px">最終更新</th>
+                </tr>
+              </thead>
+              <tbody id="report-tbody"></tbody>
+              <tfoot>
+                <tr style="border-top:2px solid var(--border);font-weight:600;background:var(--bg)">
+                  <td style="padding:6px">合計</td>
+                  <td colspan="5"></td>
+                  <td style="text-align:right;padding:6px;color:var(--accent)" id="report-grand-total">¥0</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tab: システム情報 -->
+        <div class="master-pane" data-pane="system" hidden>
+          <h4>ℹ システム情報</h4>
+          <table style="font-size:13px;border-collapse:collapse">
+            <tr><td style="padding:6px;color:var(--muted)">Firebase状態:</td><td id="sys-firebase">-</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260514t</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
+          </table>
+          <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+          <h4 style="font-size:13px">Firestore セキュリティルール (推奨)</h4>
+          <pre style="background:var(--bg);padding:10px;border-radius:6px;font-size:11px;overflow:auto;white-space:pre-wrap">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          'playmark0227@gmail.com'
+        ];
+    }
+    match /user_state/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+    match /system/public_config {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    match /system/admin_config {
+      allow read, write: if isAdmin();
+    }
+  }
+}</pre>
+        </div>
+
       </div>
-      <div class="modal-actions">
-        <button id="report-close" class="ghost">閉じる</button>
+      <div class="modal-actions" style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+        <button id="master-close" class="ghost">閉じる</button>
       </div>
     </div>
   </div>
@@ -676,9 +808,9 @@
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260514s"></script>
-<script type="module" src="firebase-sync.js?v=20260514s"></script>
-<script src="data/regions.js?v=20260514s"></script>
-<script src="app.js?v=20260514s"></script>
+<script src="firebase-config.js?v=20260514t"></script>
+<script type="module" src="firebase-sync.js?v=20260514t"></script>
+<script src="data/regions.js?v=20260514t"></script>
+<script src="app.js?v=20260514t"></script>
 </body>
 </html>
