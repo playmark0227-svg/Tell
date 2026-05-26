@@ -2786,8 +2786,52 @@ function openScoreDetailModal(companyId) {
   if (c.ai_score_pre_rerank && c.ai_score_pre_rerank !== c.ai_score) {
     sections.push(`<h4>🏆 リランキング</h4><p>個別評価: ${c.ai_score_pre_rerank}点 → リランキング後: ${c.ai_score}点<br><small>${c.ai_rerank_reason || ''}</small></p>`);
   }
+  // 高スコア(>=70)企業には メール / スクリプト生成ボタンを追加
+  if ((c.score || 0) >= 60 && (store.opts.aiKey || store.opts.braveProxy)) {
+    sections.push(`
+      <h4>✉ アクション</h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="sd-gen-email" class="ghost small">📧 メール文案を生成</button>
+        <button id="sd-gen-script" class="ghost small">📜 架電スクリプトを生成</button>
+      </div>
+      <div id="sd-generated" style="margin-top:12px"></div>
+    `);
+  }
   document.getElementById('sd-content').innerHTML = sections.join('');
   modal.hidden = false;
+  // ボタン配線
+  const genEmailBtn = document.getElementById('sd-gen-email');
+  if (genEmailBtn) genEmailBtn.addEventListener('click', async () => {
+    genEmailBtn.disabled = true; genEmailBtn.textContent = '生成中…';
+    try {
+      const text = await aiOutreachEmail(c, document.getElementById('product-input').value.trim(), state.strategy || {});
+      document.getElementById('sd-generated').innerHTML = `<h4>📧 生成されたメール</h4><pre style="background:var(--bg);padding:12px;border-radius:6px;white-space:pre-wrap;font-size:13px">${text.replace(/</g,'&lt;')}</pre><button id="sd-copy-email" class="ghost small">📋 コピー</button>`;
+      document.getElementById('sd-copy-email').addEventListener('click', () => {
+        navigator.clipboard.writeText(text);
+        document.getElementById('sd-copy-email').textContent = '✓ コピー済';
+      });
+    } catch (e) {
+      document.getElementById('sd-generated').innerHTML = `<div style="color:var(--danger)">失敗: ${e.message}</div>`;
+    } finally {
+      genEmailBtn.disabled = false; genEmailBtn.textContent = '📧 メール文案を生成';
+    }
+  });
+  const genScriptBtn = document.getElementById('sd-gen-script');
+  if (genScriptBtn) genScriptBtn.addEventListener('click', async () => {
+    genScriptBtn.disabled = true; genScriptBtn.textContent = '生成中…';
+    try {
+      const text = await aiScript(c, document.getElementById('product-input').value.trim(), state.icp || {}, state.strategy || {});
+      document.getElementById('sd-generated').innerHTML = `<h4>📜 生成された架電スクリプト</h4><pre style="background:var(--bg);padding:12px;border-radius:6px;white-space:pre-wrap;font-size:13px">${text.replace(/</g,'&lt;')}</pre><button id="sd-copy-script" class="ghost small">📋 コピー</button>`;
+      document.getElementById('sd-copy-script').addEventListener('click', () => {
+        navigator.clipboard.writeText(text);
+        document.getElementById('sd-copy-script').textContent = '✓ コピー済';
+      });
+    } catch (e) {
+      document.getElementById('sd-generated').innerHTML = `<div style="color:var(--danger)">失敗: ${e.message}</div>`;
+    } finally {
+      genScriptBtn.disabled = false; genScriptBtn.textContent = '📜 架電スクリプトを生成';
+    }
+  });
 }
 
 function setupScoreDetailModal() {
@@ -5025,24 +5069,73 @@ ${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
 }
 
 async function aiScript(company, productText, icp, strategy) {
-  const system = `あなたは特定商取引法を熟知したB2B営業のシニアコンサルタントです。架電スクリプトを生成してください。冒頭の事業者名・勧誘目的の明示、再勧誘禁止への配慮を必ず含めてください。`;
+  // 既存のAI評価データ(購買シグナル/HP引用/決裁者)を最大活用して、
+  // 「この会社のためだけの」スクリプトを生成
+  const evidence = company.ai_fit_evidence ? `\n【AI判定の適合根拠】${company.ai_fit_evidence}` : '';
+  const citations = Array.isArray(company.ai_fit_citations) && company.ai_fit_citations.length > 0
+    ? `\n【HPからの引用根拠】\n${company.ai_fit_citations.slice(0,3).map(c => `- 「${c.quote}」(${c.why||''})`).join('\n')}` : '';
+  const signals = Array.isArray(company.ai_buying_signals) && company.ai_buying_signals.length > 0
+    ? `\n【検出された購買シグナル】${company.ai_buying_signals.slice(0,4).join('、')}` : '';
+  const talking = Array.isArray(company.ai_talking_points) && company.ai_talking_points.length > 0
+    ? `\n【架電トピック候補(AI事前分析)】\n${company.ai_talking_points.slice(0,4).map((t,i)=>`${i+1}. ${t}`).join('\n')}` : '';
+  const dms = Array.isArray(company.ai_decision_makers) && company.ai_decision_makers.length > 0
+    ? `\n【決裁者候補(HP抽出)】${company.ai_decision_makers.map(d => `${d.title||''}${d.name?': '+d.name:''}`).join('、')}` : '';
+
+  const system = `あなたは特定商取引法を熟知したB2B営業のシニアコンサルタントです。
+事前にAIで分析された企業情報(購買シグナル/HP引用/決裁者)を最大限活用して、
+「この会社のためだけ」の高度にパーソナライズされた架電スクリプトを生成します。
+冒頭の事業者名・勧誘目的の明示、再勧誘禁止への配慮を必ず含めてください。`;
   const prompt = `以下の情報から、自然で実用的な架電スクリプトを日本語で作成してください。
 
 【商材】${productText}
-【ターゲット企業】${company.name} / ${company.industry} / ${company.prefecture}${company.city||''} / 従業員${company.employees}名
-【事業内容メモ】${company.description}
-【想定課題】${icp.pains?.join('、')}
-【決裁者】${strategy.decision_maker}
-【購入動機】${strategy.motivation}
+【ターゲット企業】${company.name} / ${company.industry||'?'} / ${company.prefecture||''}${company.city||''} / 従業員${company.employees||'?'}名
+【事業内容メモ】${company.description||''}
+【想定課題】${icp.pains?.join('、')||''}
+【決裁者(想定)】${strategy.decision_maker||''}
+【購入動機】${strategy.motivation||''}
+${evidence}${citations}${signals}${talking}${dms}
 
 構成:
-■ オープニング（事業者名・勧誘目的明示）
-■ 仮説提示（業種・規模・課題を踏まえた切り口）
-■ 現状ヒアリング（質問2〜3個）
+■ オープニング（事業者名・勧誘目的明示・受付突破トーク）
+■ 仮説提示（HP引用・購買シグナルを踏まえた具体的な切り口）
+■ 現状ヒアリング（質問2〜3個・上記検出シグナルに基づく）
 ■ クロージング（次のアクション提示）
+■ ◯◯部長への取次依頼トーク (決裁者候補がいれば)
 ■ コンプライアンス注意点
 
 スクリプト全文を返してください。`;
+  return await callClaude({ system, prompt, max_tokens: 2000 });
+}
+
+// パーソナライズされた最初のアプローチメール文案を生成
+async function aiOutreachEmail(company, productText, strategy) {
+  const evidence = company.ai_fit_evidence ? `\n【AI判定の適合根拠】${company.ai_fit_evidence}` : '';
+  const citations = Array.isArray(company.ai_fit_citations) && company.ai_fit_citations.length > 0
+    ? `\n【HPからの引用】${company.ai_fit_citations.slice(0,2).map(c => `「${c.quote}」`).join(' / ')}` : '';
+  const signals = Array.isArray(company.ai_buying_signals) && company.ai_buying_signals.length > 0
+    ? `\n【購買シグナル】${company.ai_buying_signals.slice(0,3).join('、')}` : '';
+
+  const system = `あなたはB2B営業のメール文案作成専門家です。
+スパムにならない、相手に「自社のことを理解してくれている」と感じさせる、簡潔でパーソナライズされた最初のアプローチメールを書きます。
+セールスっぽさを抑え、相手の課題やニュースに触れることで関心を引きます。`;
+  const prompt = `# 商材
+${productText}
+
+# 送信先企業
+${company.name} / ${company.industry||'?'} / ${company.prefecture||''}${company.city||''}
+HP: ${company.website||''}
+${evidence}${citations}${signals}
+
+# 要件
+- 件名: 30字以内、相手の関心を引く具体的トピック
+- 本文: 400-600字、以下構成
+  - 簡潔な自己紹介(1-2行)
+  - 相手企業の状況/取り組みに触れる(HPから引用ベース)
+  - 商材を相手の文脈で説明(押し売りNG)
+  - 軽い CTA(15分のオンライン MTGなど)
+- 署名は「[会社名]担当 [名前]」のプレースホルダーで
+
+メール全文(件名 + 本文)を返してください。`;
   return await callClaude({ system, prompt, max_tokens: 1500 });
 }
 
