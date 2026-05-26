@@ -3545,21 +3545,37 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       queryCandidates.push(c);
     }
     if (queryCandidates.length === 0) continue;
-    store.importedCompanies.push(...queryCandidates);
+
+    // Phase7: 事前フィルタ (品質モード時のみ)
+    // Brave のスニペットだけで明らかな非マッチを除外して HP フェッチコストを削減
+    let filteredCandidates = queryCandidates;
+    if (store.opts.qualityMode !== false && queryCandidates.length >= 5) {
+      try {
+        const preFiltered = await preFilterByBraveSnippets(queryCandidates, productText);
+        const removed = queryCandidates.length - preFiltered.length;
+        if (removed > 0) {
+          onProgress?.(`${qIdx+1}/${queries.length}: 事前フィルタで${removed}社を除外 → ${preFiltered.length}社を深掘り`);
+          filteredCandidates = preFiltered;
+        }
+      } catch (e) {
+        console.warn('preFilter failed, processing all', e);
+      }
+    }
+    store.importedCompanies.push(...filteredCandidates);
     saveStore();
     updateOnboarding();
     rescore();
-    onProgress?.(`${qIdx+1}/${queries.length}: ${queryCandidates.length}社を「評価中」で追加(3社並列で精査開始)`);
+    onProgress?.(`${qIdx+1}/${queries.length}: ${filteredCandidates.length}社を「評価中」で追加(3社並列で精査開始)`);
 
     // 3社並列ワーカー
     const WORKERS = 3;
     let cursor = 0;
     let processed = 0;
-    const total = queryCandidates.length;
+    const total = filteredCandidates.length;
     const worker = async () => {
       while (cursor < total && !state.searchAborted) {
         const i = cursor++;
-        const c = queryCandidates[i];
+        const c = filteredCandidates[i];
         onProgress?.(`${qIdx+1}/${queries.length} | ${processed+1}-${Math.min(processed+WORKERS, total)}/${total} 評価中…`);
         try {
           const enriched = await enrichCompanyDeep(c, productText);
@@ -4254,6 +4270,58 @@ JSONのみ返答:
   } catch (e) {
     console.warn('aiScoreStage1Quick failed', company.name, e);
     return null;
+  }
+}
+
+// Brave スニペット段階での事前フィルタ (品質モード時)
+// HPフェッチ前に Haiku で一気に「明らかな非マッチ」を除外
+// 1社あたり HPフェッチ + 深掘りAI評価 で 7単位かかるので、
+// 事前フィルタで30%減らせれば 7単位 × 30 = 210単位節約
+async function preFilterByBraveSnippets(candidates, productText) {
+  if (!store.opts.braveProxy && !store.opts.aiKey) return candidates;
+  if (candidates.length === 0) return candidates;
+
+  const list = candidates.map((c, i) =>
+    `${i+1}. 名前:"${c.name||'?'}" / URL:${c.source_url||c.website||''} / 説明:"${(c.description||'').slice(0,150)}"`
+  ).join('\n');
+
+  const prompt = `# 商材
+${productText}
+
+# 検索ヒット候補 ${candidates.length}件 (Brave検索のスニペットのみ)
+${list}
+
+# タスク
+各候補について、HPを実際に訪問する価値があるかを判定。
+「明らかに非マッチ」のものを除外し、価値があるものだけ残す。
+
+## 除外すべきパターン
+- 比較記事/まとめサイト/ランキング ("〇〇とは" "5選" "おすすめ")
+- 求人ポータル経由のページ
+- 海外企業
+- 商材とは無関係な業種 (例: 商材がIT系で候補が八百屋)
+- スパムサイト
+
+## 残すべきパターン
+- 法人HPっぽい (株式会社名 + 業種関連キーワード)
+- 業種が商材と関連する
+- 中小〜中堅の公式サイト
+
+JSONのみで返答:
+{"keep_indices": [1, 2, 5, 7, ...], "reasons": {"3": "比較記事", "4": "業種ミスマッチ"}}`;
+
+  try {
+    const text = await callClaude({ system: 'B2Bリードフィルタリング専門家。HPフェッチ前の事前選別を行う。', prompt, max_tokens: 800 });
+    incrementUsage('ai', 1);
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return candidates;
+    const obj = JSON.parse(m[0]);
+    if (!Array.isArray(obj.keep_indices)) return candidates;
+    const keepSet = new Set(obj.keep_indices.map(i => parseInt(i, 10)));
+    return candidates.filter((c, i) => keepSet.has(i + 1));
+  } catch (e) {
+    console.warn('preFilterByBraveSnippets failed', e);
+    return candidates;
   }
 }
 
