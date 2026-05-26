@@ -1149,6 +1149,8 @@ function renderRow(c) {
         ${c._verification === 'weak' ? `<div class="meta-tag warn" title="外部参照ほぼなし(新規/小規模/未公開法人の可能性)">⚠ 参照希薄</div>` : ''}
         ${c._sitemap_assisted ? `<div class="meta-tag" title="sitemap.xml を解析して情報密度高い独自ページを追加クロール">🗺 Sitemap</div>` : ''}
         ${Array.isArray(c.recent_news) && c.recent_news.length > 0 ? `<div class="meta-tag good" title="最近のニュース ${c.recent_news.length}件取得済 (詳細クリック)">📰 News</div>` : ''}
+        ${c._source === 'ai-suggestion' ? `<div class="meta-tag" title="AIが直接知識から提案・法人番号で実在確認済">🧠 AI提案</div>` : ''}
+        ${c._source === 'houjin-bangou-api' ? `<div class="meta-tag" title="国税庁API由来">🏛 国税庁</div>` : ''}
       </td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">
@@ -4569,6 +4571,123 @@ async function lookupHoujinByKeyword(keyword, prefectureName) {
   }
 }
 
+// AI 直接候補生成: Claude の知識から実在企業名を提案させる
+// SEO 経由でなく Claude が「知っている」企業を発見ソースに加える
+// (大規模言語モデルは数万社の企業情報を持っているため、特に中堅以上は強い)
+async function discoverViaAiSuggestions(productText, icp, onProgress) {
+  if (!store.opts.aiKey && !store.opts.braveProxy) return [];
+  const prefs = [...selectedPrefs()];
+  const cities = [...selectedCities()];
+  const regionStr = cities.length > 0 ? cities.slice(0,8).join('、')
+    : (prefs.length > 0 ? prefs.slice(0,8).join('、') : '日本全国');
+  const industriesStr = (icp?.industries || []).slice(0, 5).join('、');
+
+  onProgress?.('🧠 AIに実在候補企業を提案させています…');
+
+  const sys = `あなたは日本の企業データベース専門家です。実在する具体的な日本企業名を熟知しています。
+注意: 必ず「実在する企業」のみ挙げてください。架空・推測・存在不明な企業名は禁止です。
+わからない場合は、その業種・地域のカテゴリで「ご自身で確認するべき」と返すこと。`;
+
+  const prompt = `# 商材
+${productText}
+
+# ターゲット業種
+${industriesStr || '(指定なし)'}
+
+# ターゲット地域
+${regionStr}
+
+# タスク
+上記商材を購入する可能性が高い、上記業種・地域に該当する実在の日本企業を **30社まで** 列挙してください。
+
+## 重要なルール
+- 必ず実在する企業のみ。架空企業や推測は禁止
+- 中堅・中小企業を優先(大手企業ばかりにならないように)
+- 業種・地域のバリエーションを持たせる
+- 各社について、わかる範囲で本社所在地と業種を併記
+
+## 出力 (JSON配列のみ)
+[
+  {"name": "株式会社○○", "prefecture": "東京都", "city": "港区", "industry": "○○製造業"},
+  ...
+]
+
+確信が持てない企業は含めないでください。20社しか知らない場合は20社で構いません。`;
+
+  try {
+    const text = await callClaude({
+      system: sys, prompt,
+      model: 'claude-opus-4-7',
+      max_tokens: 4000,
+      thinking: { type: 'enabled', budget_tokens: 6000 },
+      temperature: 1.0,
+    });
+    incrementUsage('ai', 4);
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) return [];
+    const arr = JSON.parse(m[0]);
+    if (!Array.isArray(arr)) return [];
+    onProgress?.(`🧠 AIから${arr.length}社の候補`);
+    // 各候補について Brave で HP を探す + 国税庁で実在確認 (並列・最大15社)
+    const candidates = arr.slice(0, 30).filter(c => c.name && c.name.length >= 3);
+    const enriched = [];
+    for (let i = 0; i < candidates.length; i++) {
+      if (state.searchAborted) break;
+      const cand = candidates[i];
+      onProgress?.(`🧠 ${i+1}/${candidates.length} ${cand.name} のHP検索 + 法人番号確認…`);
+      try {
+        // 並列で Brave HP 検索 + 法人番号API 検索
+        const [searchResults, houjinResult] = await Promise.all([
+          braveSearchOnce(`"${cand.name}" 公式 OR 会社概要`, 5, 0).catch(() => []),
+          lookupHoujinBangou(cand.name).catch(() => null),
+        ]);
+        // 国税庁ヒットがない場合は架空の可能性が高いのでスキップ
+        if (!houjinResult || !houjinResult.found) {
+          continue;
+        }
+        // 公式HPらしいURLを選択
+        const ownDomain = searchResults.find(r => {
+          const dom = rootDomain(r.url);
+          if (!dom || isExcludedDomain(r.url)) return false;
+          const cleanName = cand.name.replace(/(株式会社|合同会社|有限会社).*?/, '').trim();
+          return r.title && r.title.includes(cleanName);
+        }) || searchResults[0];
+        if (!ownDomain) continue;
+        const c = {
+          id: 700000 + Date.now() % 1000000 + i,
+          name: houjinResult.official_name || cand.name,
+          official_name: houjinResult.official_name,
+          houjin_bangou: houjinResult.houjin_bangou,
+          phone: '',
+          website: `https://${rootDomain(ownDomain.url)}`,
+          source_url: ownDomain.url,
+          contact_url: '',
+          industry: cand.industry || '',
+          prefecture: houjinResult.official_prefecture || cand.prefecture || '',
+          city: houjinResult.official_city || cand.city || '',
+          address: houjinResult.official_address,
+          official_address: houjinResult.official_address,
+          size: 'small',
+          employees: 30,
+          description: ownDomain.description || '',
+          keywords: [],
+          found_via_product: productText.slice(0, 60),
+          discovered_at: Date.now(),
+          needs_enrichment: true,
+          _source: 'ai-suggestion',
+        };
+        enriched.push(c);
+      } catch (e) {
+        console.warn('AI candidate enrich failed', cand.name, e);
+      }
+    }
+    return enriched;
+  } catch (e) {
+    console.warn('discoverViaAiSuggestions failed', e);
+    return [];
+  }
+}
+
 // 国税庁ベースの候補発見: 選択地域×業種キーワードから法人を引いて、
 // 各社のHPを Brave 検索で探して候補リストに追加
 async function discoverViaHoujinBangou(productText, icp, onProgress) {
@@ -6483,6 +6602,31 @@ async function runPipeline(input, options = {}) {
       const found = await discoverFromBrave(input, state.icp, msg => {
         progEl.textContent = msg;
       }, customQueries ? { queries: customQueries, maxQueries: maxQs } : {});
+      // AI 直接候補生成 (品質モード時)
+      // SEO に縛られず Claude の知識ベースから実在企業を直接候補化
+      let aiSuggested = [];
+      if (store.opts.qualityMode !== false) {
+        try {
+          const candidates = await discoverViaAiSuggestions(input, state.icp, msg => {
+            progEl.textContent = msg;
+          });
+          // 重複除外 (法人番号 + ドメイン)
+          const existingBangous = new Set([...store.importedCompanies, ...store.customCompanies, ...found]
+            .map(c => c.houjin_bangou).filter(Boolean));
+          const existingDomains = new Set([...store.importedCompanies, ...store.customCompanies, ...found]
+            .map(c => rootDomain(c.website||'')).filter(Boolean));
+          aiSuggested = candidates.filter(c =>
+            (!c.houjin_bangou || !existingBangous.has(c.houjin_bangou)) &&
+            !existingDomains.has(rootDomain(c.website||''))
+          );
+          if (aiSuggested.length > 0) {
+            store.importedCompanies.push(...aiSuggested);
+            saveStore();
+          }
+        } catch (e) {
+          console.warn('AI suggestion discovery failed', e);
+        }
+      }
       // 国税庁API補助発見 (品質モード + 地域指定時のみ)
       let houjinFound = [];
       if (store.opts.qualityMode !== false && (prefList.length > 0 || cityList.length > 0)) {
@@ -6513,7 +6657,7 @@ async function runPipeline(input, options = {}) {
         }
       }
       progEl.classList.add('done');
-      progEl.textContent = `✓ ${found.length}社(Brave) + ${houjinFound.length}社(国税庁) = 計${found.length + houjinFound.length}社の新規企業を発見`;
+      progEl.textContent = `✓ Brave:${found.length}社 + 国税庁:${houjinFound.length}社 + AI提案:${aiSuggested.length}社 = 計${found.length + houjinFound.length + aiSuggested.length}社の新規企業を発見`;
     } catch (e) {
       console.error('discover error:', e);
       progEl.classList.add('error');
