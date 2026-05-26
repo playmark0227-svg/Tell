@@ -6599,65 +6599,72 @@ async function runPipeline(input, options = {}) {
     // 地域数 × 業種数 ぶんのクエリを実行(最大30本までで安全弁)
     const maxQs = customQueries ? Math.min(30, Math.max(10, customQueries.length)) : 10;
     try {
-      const found = await discoverFromBrave(input, state.icp, msg => {
-        progEl.textContent = msg;
-      }, customQueries ? { queries: customQueries, maxQueries: maxQs } : {});
-      // AI 直接候補生成 (品質モード時)
-      // SEO に縛られず Claude の知識ベースから実在企業を直接候補化
-      let aiSuggested = [];
-      if (store.opts.qualityMode !== false) {
-        try {
-          const candidates = await discoverViaAiSuggestions(input, state.icp, msg => {
-            progEl.textContent = msg;
+      // Phase26: 3つの発見ソースを並列実行 (Brave + 国税庁 + AI候補)
+      // 各ソースの進捗ログをラベル付きでマージ
+      const statusByLine = { brave: '', houjin: '', ai: '' };
+      const updateProg = () => {
+        const lines = [];
+        if (statusByLine.brave) lines.push(`🔍 Brave: ${statusByLine.brave}`);
+        if (statusByLine.houjin) lines.push(`🏛 国税庁: ${statusByLine.houjin}`);
+        if (statusByLine.ai) lines.push(`🧠 AI候補: ${statusByLine.ai}`);
+        progEl.textContent = lines.join(' / ');
+      };
+
+      const useQuality = store.opts.qualityMode !== false;
+      const useHoujin = useQuality && (prefList.length > 0 || cityList.length > 0);
+      const useAiSuggest = useQuality;
+
+      const [found, aiSuggestedRaw, houjinCandidatesRaw] = await Promise.all([
+        discoverFromBrave(input, state.icp, msg => {
+          statusByLine.brave = msg; updateProg();
+        }, customQueries ? { queries: customQueries, maxQueries: maxQs } : {}),
+        useAiSuggest ? discoverViaAiSuggestions(input, state.icp, msg => {
+          statusByLine.ai = msg; updateProg();
+        }).catch(e => { console.warn('AI suggest failed', e); return []; }) : Promise.resolve([]),
+        useHoujin ? discoverViaHoujinBangou(input, state.icp, msg => {
+          statusByLine.houjin = msg; updateProg();
+        }).catch(e => { console.warn('houjin failed', e); return []; }) : Promise.resolve([]),
+      ]);
+
+      // 重複除外 (法人番号 + ドメイン)
+      const existingBangous = new Set([...store.importedCompanies, ...store.customCompanies, ...found]
+        .map(c => c.houjin_bangou).filter(Boolean));
+      const existingDomains = new Set([...store.importedCompanies, ...store.customCompanies, ...found]
+        .map(c => rootDomain(c.website||'')).filter(Boolean));
+
+      const aiSuggested = aiSuggestedRaw.filter(c =>
+        (!c.houjin_bangou || !existingBangous.has(c.houjin_bangou)) &&
+        !existingDomains.has(rootDomain(c.website||''))
+      );
+      if (aiSuggested.length > 0) {
+        store.importedCompanies.push(...aiSuggested);
+        aiSuggested.forEach(c => {
+          if (c.houjin_bangou) existingBangous.add(c.houjin_bangou);
+          existingDomains.add(rootDomain(c.website||''));
+        });
+        saveStore();
+      }
+
+      // 国税庁候補をHP付きエンリッチ (重複除外後)
+      let houjinFound = [];
+      if (houjinCandidatesRaw.length > 0) {
+        const dedupedHoujin = houjinCandidatesRaw.filter(c =>
+          !c.houjin_bangou || !existingBangous.has(c.houjin_bangou));
+        if (dedupedHoujin.length > 0) {
+          statusByLine.houjin = `HP検索 ${Math.min(40, dedupedHoujin.length)}社…`;
+          updateProg();
+          houjinFound = await enrichHoujinCandidatesWithHP(dedupedHoujin.slice(0, 40), input, msg => {
+            statusByLine.houjin = msg; updateProg();
           });
-          // 重複除外 (法人番号 + ドメイン)
-          const existingBangous = new Set([...store.importedCompanies, ...store.customCompanies, ...found]
-            .map(c => c.houjin_bangou).filter(Boolean));
-          const existingDomains = new Set([...store.importedCompanies, ...store.customCompanies, ...found]
-            .map(c => rootDomain(c.website||'')).filter(Boolean));
-          aiSuggested = candidates.filter(c =>
-            (!c.houjin_bangou || !existingBangous.has(c.houjin_bangou)) &&
-            !existingDomains.has(rootDomain(c.website||''))
-          );
-          if (aiSuggested.length > 0) {
-            store.importedCompanies.push(...aiSuggested);
+          if (houjinFound.length > 0) {
+            store.importedCompanies.push(...houjinFound);
             saveStore();
           }
-        } catch (e) {
-          console.warn('AI suggestion discovery failed', e);
         }
       }
-      // 国税庁API補助発見 (品質モード + 地域指定時のみ)
-      let houjinFound = [];
-      if (store.opts.qualityMode !== false && (prefList.length > 0 || cityList.length > 0)) {
-        try {
-          progEl.textContent = `🏛 国税庁ベースで補助発見を開始…`;
-          const houjinCandidates = await discoverViaHoujinBangou(input, state.icp, msg => {
-            progEl.textContent = msg;
-          });
-          // 既存の発見企業と重複する法人番号を除外
-          const existingBangous = new Set([...store.importedCompanies, ...store.customCompanies]
-            .map(c => c.houjin_bangou).filter(Boolean));
-          const dedupedCandidates = houjinCandidates.filter(c =>
-            !c.houjin_bangou || !existingBangous.has(c.houjin_bangou));
-          if (dedupedCandidates.length > 0) {
-            // HP取得 + パイプライン投入 (最大40社まで)
-            const limit = Math.min(40, dedupedCandidates.length);
-            houjinFound = await enrichHoujinCandidatesWithHP(dedupedCandidates.slice(0, limit), input, msg => {
-              progEl.textContent = msg;
-            });
-            if (houjinFound.length > 0) {
-              store.importedCompanies.push(...houjinFound);
-              saveStore();
-              // 通常のAIスコアリングは後続の batchScoreExisting に任せる
-            }
-          }
-        } catch (e) {
-          console.warn('houjin discovery failed', e);
-        }
-      }
+
       progEl.classList.add('done');
-      progEl.textContent = `✓ Brave:${found.length}社 + 国税庁:${houjinFound.length}社 + AI提案:${aiSuggested.length}社 = 計${found.length + houjinFound.length + aiSuggested.length}社の新規企業を発見`;
+      progEl.textContent = `✓ Brave:${found.length}社 + 国税庁:${houjinFound.length}社 + AI提案:${aiSuggested.length}社 = 計${found.length + houjinFound.length + aiSuggested.length}社の新規企業を並列発見`;
     } catch (e) {
       console.error('discover error:', e);
       progEl.classList.add('error');
