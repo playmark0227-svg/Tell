@@ -3195,6 +3195,55 @@ async function fetchPageViaProxy(targetUrl) {
   }
 }
 
+/* ============ 国税庁法人番号API クライアント ============ */
+// 公式の法人実在性確認 + 公式所在地取得
+// レスポンスは https://www.houjin-bangou.nta.go.jp/webapi/ の仕様参照
+// CSV形式 → 1行=1法人。フィールド: シーケンス番号,法人番号,処理区分,訂正区分,更新年月日,
+//   変更年月日,商号又は名称,商号又は名称(ふりがな),...,本店所在地都道府県コード,本店所在地市区町村コード,
+//   本店所在地_丁目番地,都道府県名,市区町村名,...
+// type=12 はJSON、mode=2は部分一致
+
+const _houjinCache = new Map(); // name -> Promise<result>
+async function lookupHoujinBangou(companyName) {
+  if (!store.opts.braveProxy || !companyName) return null;
+  // 法人格を除いた名前で検索精度UP
+  const cleanName = companyName
+    .replace(/(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人|宗教法人|協同組合|Inc\.?|Corp\.?|LLC|Co\.,?\s?Ltd|Group|Company)/gi, '')
+    .trim();
+  if (cleanName.length < 2) return null;
+  if (_houjinCache.has(cleanName)) return _houjinCache.get(cleanName);
+  const promise = (async () => {
+    const proxy = store.opts.braveProxy.replace(/\/+$/, '');
+    try {
+      const res = await fetch(`${proxy}/houjin-bangou?name=${encodeURIComponent(cleanName)}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      // レスポンスは {count, divideNumber, lastUpdateDate, corporations: [...]}
+      // corporations[].name, corporations[].prefectureName, corporations[].cityName, corporations[].streetNumber
+      const corps = (data.corporations || data.corporation || []);
+      if (corps.length === 0) return { found: false };
+      // 最も会社名と類似度が高い候補をピック
+      const exact = corps.find(c => (c.name || '').includes(cleanName) || cleanName.includes((c.name||'').replace(/(株式会社|合同会社|有限会社).*/, '').trim()));
+      const pick = exact || corps[0];
+      return {
+        found: true,
+        houjin_bangou: pick.corporateNumber || pick.corpNumber || '',
+        official_name: pick.name || '',
+        official_prefecture: pick.prefectureName || '',
+        official_city: pick.cityName || '',
+        official_street: pick.streetNumber || '',
+        official_address: [pick.prefectureName, pick.cityName, pick.streetNumber].filter(Boolean).join(''),
+        candidate_count: corps.length,
+      };
+    } catch (e) {
+      console.warn('houjin lookup failed', cleanName, e);
+      return null;
+    }
+  })();
+  _houjinCache.set(cleanName, promise);
+  return promise;
+}
+
 const JP_PREFS = ['北海道','青森県','岩手県','宮城県','秋田県','山形県','福島県','茨城県','栃木県','群馬県','埼玉県','千葉県','東京都','神奈川県','新潟県','富山県','石川県','福井県','山梨県','長野県','岐阜県','静岡県','愛知県','三重県','滋賀県','京都府','大阪府','兵庫県','奈良県','和歌山県','鳥取県','島根県','岡山県','広島県','山口県','徳島県','香川県','愛媛県','高知県','福岡県','佐賀県','長崎県','熊本県','大分県','宮崎県','鹿児島県','沖縄県'];
 
 function extractFromHTML(html, baseUrl) {

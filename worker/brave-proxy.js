@@ -1,15 +1,20 @@
 /**
- * tell partner - Brave Search + HPフェッチ + LLM チャット プロキシ v3
+ * tell partner - Brave Search + HPフェッチ + LLM チャット + 国税庁法人番号API プロキシ v4
  *
  * エンドポイント:
  *   GET  /search?q=...         → Brave Search API へプロキシ
  *   GET  /fetch?url=...        → 任意のHPを取得（CORS回避用）
  *   POST /llm/chat             → LLMチャット(Anthropic優先、Workers AIフォールバック)
+ *                                 extended thinking 対応(thinking: {type:"enabled", budget_tokens:N})
+ *   GET  /houjin-bangou?name=... → 国税庁法人番号 Web-API プロキシ
+ *                                 公式の法人実在性確認 + 公式所在地取得
  *
  * 環境変数(Secret):
- *   BRAVE_API_KEY       Braveで発行したAPIキー(検索用)
- *   ANTHROPIC_API_KEY   Anthropicで発行したAPIキー(LLM用・有料)
- *   ALLOWED_ORIGIN      許可するオリジン
+ *   BRAVE_API_KEY            Brave Search APIキー
+ *   ANTHROPIC_API_KEY        Anthropic APIキー(extended thinking可)
+ *   HOUJIN_BANGOU_APP_ID     国税庁 Web-API のアプリケーションID(無料で取得可)
+ *                            https://www.houjin-bangou.nta.go.jp/webapi/
+ *   ALLOWED_ORIGIN           CORS許可オリジン
  *
  * AI Binding(無料・任意):
  *   AI binding を Worker Settings → AI Bindings で追加すると、Workers AI を
@@ -99,6 +104,48 @@ export default {
       }
     }
 
+    // 国税庁 法人番号 Web-API (公式)
+    // 法人名 → 登記情報(法人番号/正式名称/本店所在地)を引く
+    // https://www.houjin-bangou.nta.go.jp/webapi/
+    if (url.pathname === '/houjin-bangou') {
+      if (!env.HOUJIN_BANGOU_APP_ID) {
+        return new Response(JSON.stringify({ error: 'HOUJIN_BANGOU_APP_ID not configured' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+      const name = url.searchParams.get('name');
+      const number = url.searchParams.get('number');
+      try {
+        let target;
+        if (number) {
+          target = `https://api.houjin-bangou.nta.go.jp/4/num?id=${env.HOUJIN_BANGOU_APP_ID}&number=${encodeURIComponent(number)}&type=12`;
+        } else if (name) {
+          // 部分一致検索, JSON形式
+          target = `https://api.houjin-bangou.nta.go.jp/4/name?id=${env.HOUJIN_BANGOU_APP_ID}&name=${encodeURIComponent(name)}&type=12&mode=2`;
+        } else {
+          return new Response(JSON.stringify({ error: 'name or number param required' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+        }
+        const res = await fetch(target, {
+          headers: { 'Accept': 'application/json' },
+          cf: { cacheTtl: 3600, cacheEverything: true },
+        });
+        const body = await res.text();
+        return new Response(body, {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    }
+
     // LLM chat
     if (url.pathname === '/llm/chat' && request.method === 'POST') {
       let body;
@@ -108,19 +155,27 @@ export default {
       // 優先: Anthropic
       if (env.ANTHROPIC_API_KEY) {
         try {
+          // extended thinking 対応: body に thinking: {type:"enabled", budget_tokens:N} があれば
+          // anthropic-beta ヘッダを付与
+          const headers = {
+            'x-api-key': env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          };
+          const requestBody = {
+            model: body.model || 'claude-haiku-4-5-20251001',
+            max_tokens: body.max_tokens || 1024,
+            system: body.system,
+            messages: body.messages,
+          };
+          if (body.thinking) {
+            requestBody.thinking = body.thinking;
+          }
+          if (body.temperature !== undefined) requestBody.temperature = body.temperature;
           const res = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
-            headers: {
-              'x-api-key': env.ANTHROPIC_API_KEY,
-              'anthropic-version': '2023-06-01',
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: body.model || 'claude-haiku-4-5-20251001',
-              max_tokens: body.max_tokens || 1024,
-              system: body.system,
-              messages: body.messages,
-            }),
+            headers,
+            body: JSON.stringify(requestBody),
           });
           return new Response(await res.text(), {
             status: res.status,
@@ -161,7 +216,7 @@ export default {
       }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
     }
 
-    return new Response('Not found. Use /search /fetch /llm/chat', {
+    return new Response('Not found. Use /search /fetch /llm/chat /houjin-bangou', {
       status: 404,
       headers: corsHeaders,
     });
