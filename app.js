@@ -2669,6 +2669,109 @@ function renderQualitySummary(filteredList) {
   setText('qs-avg', avg);
 }
 
+/* ============ 商材プロファイル自動進化 ============ */
+// 検索を重ねるたびに「この商材のターゲット像」を実例から学習・refine する。
+// 商談化・保存・👍 された企業の特徴 vs DNC・👎 された企業の特徴 を AI に渡し、
+// 次回検索クエリ・ICP・評価基準を継続的に改善する。
+
+async function evolveProductProfile(productText) {
+  if (!productText || (!store.opts.aiKey && !store.opts.braveProxy)) return null;
+  // 正例: 商談化 + 保存 + 👍
+  const positives = [];
+  // 負例: DNC + 👎
+  const negatives = [];
+  const allCompanies = getAllCompanies();
+  for (const c of allCompanies) {
+    if (c.ai_scored_for && c.ai_scored_for.slice(0,60) !== productText.slice(0,60)) continue;
+    const id = c.id;
+    const fb = store.feedback?.[id]?.rating;
+    const isMeeting = store.status?.[id] === 'meeting';
+    const isSaved = store.saved.has(id);
+    const isDnc = store.dnc.has(id);
+    const isRejected = store.status?.[id] === 'rejected';
+    if (isMeeting || fb === 'good' || (isSaved && !isDnc)) {
+      positives.push(c);
+    } else if (isDnc || fb === 'bad' || isRejected) {
+      negatives.push(c);
+    }
+  }
+  if (positives.length === 0 && negatives.length === 0) return null;
+
+  const profile = (label, list) => list.slice(0, 8).map((c, i) =>
+    `${i+1}. ${c.name} (${c.industry||'?'} / ${c.prefecture||''}${c.city||''} / ${c.employees||'?'}名) - ${c.ai_fit_evidence || c.description?.slice(0,60) || ''}`
+  ).join('\n');
+
+  const sys = `あなたはB2B営業の戦略アナリストです。
+ユーザーの過去の営業活動結果(正例: 商談化/保存、負例: DNC/拒否)から、
+理想顧客像(ICP)と検索戦略を改善します。`;
+  const prompt = `# 商材
+${productText}
+
+# 正例 (商談化・保存・高評価) ${positives.length}社
+${profile('positives', positives) || '(なし)'}
+
+# 負例 (DNC・拒否・低評価) ${negatives.length}社
+${profile('negatives', negatives) || '(なし)'}
+
+# タスク
+これら実例から、この商材の「真の理想顧客像」を抽出してください。
+- 正例の共通項(業種・規模・特徴)
+- 負例の共通項(避けるべきパターン)
+- 次回検索で意識すべき差別化ポイント
+
+JSONのみで返答:
+{
+  "refined_industries": ["真に有望な業種3-6個"],
+  "refined_sizes": ["small|mid|large"],
+  "refined_pains": ["実例から推定される課題3-5個"],
+  "refined_keywords": ["有効な検索キーワード5-8個"],
+  "avoid_patterns": ["避けるべき業種・パターン3-5個"],
+  "insights": "30字以内の戦略インサイト",
+  "search_strategy_tweaks": ["次回検索クエリ改善案2-4個"]
+}`;
+
+  try {
+    const text = await callClaude({
+      system: sys, prompt,
+      model: 'claude-opus-4-7',
+      max_tokens: 2500,
+      thinking: { type: 'enabled', budget_tokens: 6000 },
+      temperature: 1.0,
+    });
+    incrementUsage('ai', 3);
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const obj = JSON.parse(m[0]);
+    return obj;
+  } catch (e) {
+    console.warn('evolveProductProfile failed', e);
+    return null;
+  }
+}
+
+// ICP を進化版で更新する (ユーザー確認後)
+function applyEvolvedProfile(evolved) {
+  if (!evolved || !state.icp) return;
+  if (Array.isArray(evolved.refined_industries) && evolved.refined_industries.length > 0) {
+    state.icp.industries = evolved.refined_industries.slice(0, 8);
+  }
+  if (Array.isArray(evolved.refined_sizes) && evolved.refined_sizes.length > 0) {
+    state.icp.sizes = evolved.refined_sizes;
+  }
+  if (Array.isArray(evolved.refined_pains) && evolved.refined_pains.length > 0) {
+    state.icp.pains = evolved.refined_pains;
+  }
+  if (Array.isArray(evolved.refined_keywords) && evolved.refined_keywords.length > 0) {
+    state.icp.keywords = evolved.refined_keywords;
+  }
+  if (Array.isArray(evolved.avoid_patterns)) {
+    state.icp.anti_patterns = evolved.avoid_patterns;
+  }
+  logAction('icp_evolved', evolved.insights || '');
+  saveStore();
+  renderICP(state.icp);
+}
+
 /* ============ ユーザーフィードバック (AI 自己改善ループ) ============ */
 function recordFeedback(companyId, rating, scoreCorrection = null, comment = '') {
   if (!store.feedback) store.feedback = {};
@@ -6126,6 +6229,41 @@ async function init() {
   });
   const dsBtn = document.getElementById('discover-similar-btn');
   if (dsBtn) dsBtn.addEventListener('click', discoverSimilarToTop);
+  const epBtn = document.getElementById('evolve-profile-btn');
+  if (epBtn) epBtn.addEventListener('click', async () => {
+    if (!state.icp) { alert('先に商材を分析してください'); return; }
+    const productText = document.getElementById('product-input').value.trim();
+    if (!productText) return;
+    epBtn.disabled = true; epBtn.textContent = '🧬 進化中…';
+    try {
+      const evolved = await evolveProductProfile(productText);
+      if (!evolved) {
+        alert('進化に必要な実例(商談化/DNC等)が不足しています。\nまず数社を架電・評価してください。');
+        return;
+      }
+      const summary = `提案された進化版プロファイル:
+
+【業種】 ${(evolved.refined_industries||[]).join('、')}
+【規模】 ${(evolved.refined_sizes||[]).join('・')}
+【課題】 ${(evolved.refined_pains||[]).join('、')}
+【避けるべき】 ${(evolved.avoid_patterns||[]).join('、')}
+
+【インサイト】 ${evolved.insights || ''}
+
+【次回検索改善案】
+${(evolved.search_strategy_tweaks||[]).map((t,i)=>`${i+1}. ${t}`).join('\n')}
+
+このプロファイルを適用しますか?`;
+      if (confirm(summary)) {
+        applyEvolvedProfile(evolved);
+        alert('✓ ICP を進化版に更新しました。次回検索から反映されます。');
+      }
+    } catch (e) {
+      alert(`失敗: ${e.message}`);
+    } finally {
+      epBtn.disabled = false; epBtn.textContent = '🧬 商材プロファイル進化';
+    }
+  });
 
   // 地域選択モーダル
   const rsBtn = document.getElementById('region-select-btn');
