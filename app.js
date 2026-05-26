@@ -1050,6 +1050,7 @@ function renderResults() {
   if (!tbody) return;
   const total = state.scored.length;
   renderQualitySummary(filtered);
+  renderDashCharts(filtered);
 
   if (filtered.length === 0 && total > 0) {
     // フィルタで弾かれている → 案内+リセットボタン表示
@@ -1080,8 +1081,22 @@ function renderResults() {
       renderResults();
     });
   } else {
-    tbody.innerHTML = filtered.map(c => renderRow(c)).join('');
+    // パフォーマンス対策: 200件超なら最初の150件のみ表示、続きはボタンで展開
+    const RENDER_INITIAL = 150;
+    const shouldTruncate = filtered.length > 200 && !state._renderAll;
+    const toRender = shouldTruncate ? filtered.slice(0, RENDER_INITIAL) : filtered;
+    let html = toRender.map(c => renderRow(c)).join('');
+    if (shouldTruncate) {
+      const colCount = document.querySelectorAll('#results-table thead th').length || 10;
+      html += `<tr><td colspan="${colCount}" style="text-align:center;padding:16px;background:var(--bg)">残り ${filtered.length - RENDER_INITIAL} 件を表示 <button id="render-all-btn" class="ghost small" style="margin-left:8px">📋 全件表示 (重くなる場合あり)</button></td></tr>`;
+    }
+    tbody.innerHTML = html;
     bindRowActions();
+    const renderAllBtn = document.getElementById('render-all-btn');
+    if (renderAllBtn) renderAllBtn.addEventListener('click', () => {
+      state._renderAll = true;
+      renderResults();
+    });
   }
   const countEl = document.getElementById('result-count');
   if (countEl) {
@@ -2652,6 +2667,97 @@ JSONのみで返答:
   }
 }
 
+/* ============ ダッシュボードチャート ============ */
+function renderDashCharts(filteredList) {
+  const panel = document.getElementById('dash-charts');
+  if (!panel) return;
+  const list = filteredList || [];
+  if (list.length < 3) { panel.style.display = 'none'; return; }
+  panel.style.display = 'grid';
+
+  // スコアヒストグラム (10バケット)
+  const buckets = new Array(10).fill(0);
+  for (const c of list) {
+    const idx = Math.min(9, Math.floor((c.score || 0) / 10));
+    buckets[idx]++;
+  }
+  const maxBucket = Math.max(...buckets, 1);
+  const histHtml = `
+    <div class="dash-card">
+      <h5>📊 スコア分布</h5>
+      <div class="score-hist">
+        ${buckets.map((v, i) => `<div class="score-hist-bar" style="height:${Math.round(100*v/maxBucket)}%" data-tip="${i*10}-${i*10+9}点: ${v}社"></div>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px">
+        <span>0</span><span>50</span><span>100</span>
+      </div>
+    </div>`;
+
+  // 業種分布Top5
+  const byInd = {};
+  for (const c of list) byInd[c.industry || '不明'] = (byInd[c.industry || '不明'] || 0) + 1;
+  const indTop = Object.entries(byInd).sort((a,b) => b[1]-a[1]).slice(0, 5);
+  const maxInd = indTop[0]?.[1] || 1;
+  const indHtml = `
+    <div class="dash-card">
+      <h5>🏭 業種別 Top5</h5>
+      ${indTop.map(([k,v]) => `
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">${k.slice(0,10)}</span>
+          <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*v/maxInd)}%"></div></div>
+          <span class="bar-chart-val">${v}</span>
+        </div>`).join('')}
+    </div>`;
+
+  // 地域分布Top5
+  const byPref = {};
+  for (const c of list) byPref[c.prefecture || '不明'] = (byPref[c.prefecture || '不明'] || 0) + 1;
+  const prefTop = Object.entries(byPref).sort((a,b) => b[1]-a[1]).slice(0, 5);
+  const maxPref = prefTop[0]?.[1] || 1;
+  const prefHtml = `
+    <div class="dash-card">
+      <h5>📍 地域別 Top5</h5>
+      ${prefTop.map(([k,v]) => `
+        <div class="bar-chart-row">
+          <span class="bar-chart-label">${k}</span>
+          <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*v/maxPref)}%;background:var(--good)"></div></div>
+          <span class="bar-chart-val">${v}</span>
+        </div>`).join('')}
+    </div>`;
+
+  // 信頼性指標
+  const houjin = list.filter(c => c.houjin_bangou).length;
+  const deep = list.filter(c => c._used_deep_eval).length;
+  const verified = list.filter(c => c._verification === 'strong').length;
+  const active = list.filter(c => c.activeness === 'active').length;
+  const reliabilityHtml = `
+    <div class="dash-card">
+      <h5>🛡 信頼性カバレッジ</h5>
+      <div class="bar-chart-row">
+        <span class="bar-chart-label">🆔 法人番号</span>
+        <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*houjin/list.length)}%;background:var(--accent)"></div></div>
+        <span class="bar-chart-val">${Math.round(100*houjin/list.length)}%</span>
+      </div>
+      <div class="bar-chart-row">
+        <span class="bar-chart-label">🧠 Deep評価</span>
+        <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*deep/list.length)}%;background:var(--accent)"></div></div>
+        <span class="bar-chart-val">${Math.round(100*deep/list.length)}%</span>
+      </div>
+      <div class="bar-chart-row">
+        <span class="bar-chart-label">🌐 検証済</span>
+        <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*verified/list.length)}%;background:var(--good)"></div></div>
+        <span class="bar-chart-val">${Math.round(100*verified/list.length)}%</span>
+      </div>
+      <div class="bar-chart-row">
+        <span class="bar-chart-label">⚡ アクティブ</span>
+        <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*active/list.length)}%;background:var(--good)"></div></div>
+        <span class="bar-chart-val">${Math.round(100*active/list.length)}%</span>
+      </div>
+    </div>`;
+
+  panel.innerHTML = histHtml + indHtml + prefHtml + reliabilityHtml;
+}
+
 /* ============ 品質サマリーパネル ============ */
 function renderQualitySummary(filteredList) {
   const panel = document.getElementById('quality-summary');
@@ -2899,6 +3005,50 @@ function buildFewShotFromFeedback(productText, limit = 3) {
     lines.push(`- ${c.name} (${c.industry||'?'}) → AI評価${c.ai_score||'?'}点 ${judgment} ${correction}${comment}`);
   }
   return lines.join('\n') + '\n';
+}
+
+/* ============ キーボードショートカット ============ */
+function setupKeyboardShortcuts() {
+  document.addEventListener('keydown', e => {
+    // 入力欄にフォーカスがあるとき、または修飾キー押下中は無視
+    const inField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+    if (inField && e.key !== 'Escape') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (e.key) {
+      case 'Escape':
+        // 開いてるモーダルを閉じる
+        document.querySelectorAll('.modal:not([hidden])').forEach(m => m.hidden = true);
+        break;
+      case '/':
+        // 検索ボックスにフォーカス
+        e.preventDefault();
+        document.getElementById('search-box')?.focus();
+        break;
+      case 'a':
+        // 全選択 (比較用チェックボックス)
+        document.querySelectorAll('.cmp-check').forEach(cb => cb.checked = true);
+        updateBulkBar();
+        break;
+      case 'c':
+        // 全選択クリア
+        document.querySelectorAll('.cmp-check').forEach(cb => cb.checked = false);
+        updateBulkBar();
+        break;
+      case '?':
+        // ヘルプ
+        showShortcutsHelp();
+        break;
+    }
+  });
+}
+
+function showShortcutsHelp() {
+  alert(`キーボードショートカット:
+/ → 検索ボックスにフォーカス
+a → 全選択 (比較用チェック)
+c → 選択クリア
+Esc → モーダルを閉じる
+? → このヘルプ`);
 }
 
 /* ============ 通話シミュレーター(AIロールプレイ) ============ */
@@ -6576,6 +6726,7 @@ async function init() {
   setupSnapshotsModal();
   setupRoleplayModal();
   setupBulkActions();
+  setupKeyboardShortcuts();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {
