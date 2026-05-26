@@ -923,6 +923,9 @@ function buildAIComment(company, icp, strategy, signals, score) {
   // Deep AI 評価結果があれば、それを最優先で表示 (引用付き)
   if (company._used_deep_eval && company.ai_reasoning) {
     const parts = [];
+    if (company._reranked && company.ai_rerank_reason) {
+      parts.push(`🏆 ${company.ai_rerank_reason}`);
+    }
     parts.push(company.ai_reasoning);
     if (company.ai_fit_evidence) parts.push(`根拠: ${company.ai_fit_evidence}`);
     if (Array.isArray(company.ai_buying_signals) && company.ai_buying_signals.length > 0) {
@@ -934,6 +937,11 @@ function buildAIComment(company, icp, strategy, signals, score) {
     }
     if (Array.isArray(company.ai_risks) && company.ai_risks.length > 0) {
       parts.push(`⚠リスク: ${company.ai_risks.slice(0,2).join('、')}`);
+    }
+    if (company.activeness === 'inactive') {
+      parts.push(`⚠ 活動停止シグナル検出`);
+    } else if (company.activeness === 'active') {
+      parts.push(`✓ アクティブ(最近の更新あり)`);
     }
     if (company.ai_confidence) {
       const confJp = { low: '低', medium: '中', high: '高' }[company.ai_confidence] || company.ai_confidence;
@@ -1098,6 +1106,9 @@ function renderRow(c) {
         ${c.houjin_bangou ? `<div class="meta-tag" title="国税庁登記情報で確認済み">🆔 ${c.houjin_bangou}</div>` : ''}
         ${c.houjin_not_registered ? `<div class="meta-tag warn" title="国税庁に登記なし(任意団体・個人事業の可能性)">⚠ 未登記</div>` : ''}
         ${c._used_deep_eval ? `<div class="meta-tag good" title="Opus + 拡張思考で深く評価">🧠 Deep</div>` : ''}
+        ${c._reranked ? `<div class="meta-tag good" title="最終リランキング適用">🏆 Reranked</div>` : ''}
+        ${c.activeness === 'inactive' ? `<div class="meta-tag warn" title="廃業・事業終了シグナル検出">💤 活動停止?</div>` : ''}
+        ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
       </td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">
@@ -3588,8 +3599,92 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   }
   rescoreFlush();
   saveStore();
+
+  // Phase 8: 最終リランキング (品質モード時のみ)
+  // 全候補を一覧して相対的に並び替え、calibration ズレを補正
+  if (store.opts.qualityMode !== false && found.length >= 5) {
+    try {
+      onProgress?.(`🧠 最終リランキング中(Top${Math.min(30, found.length)}社を相対比較)…`);
+      await rerankTopCandidates(productText, found.slice(0, 30));
+      rescoreFlush();
+      saveStore();
+    } catch (e) {
+      console.warn('rerank failed', e);
+    }
+  }
   onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
   return found;
+}
+
+// Top候補を Opus で相対比較してスコアを微調整
+// 「個別評価」だけでは calibration がブレるので、最後に全体俯瞰でランキングを正す
+async function rerankTopCandidates(productText, topCompanies) {
+  if (!topCompanies || topCompanies.length < 2) return;
+  const sys = `あなたはB2B営業のシニアアカウントエグゼクティブです。
+複数の候補企業を商材適合度の観点から相対的に比較し、ランキングと相対スコア(0-100)を返してください。
+個別評価ではなく、「この中で誰に最初に架電すべきか」を判断します。JSONのみ返答。`;
+
+  const list = topCompanies.map((c, i) => {
+    const sig = (c.ai_buying_signals || []).slice(0,3).join('・') || 'なし';
+    const evidence = c.ai_fit_evidence || 'なし';
+    return `${i+1}. ${c.name} (${c.industry||'?'} / ${c.prefecture||'?'}${c.city||''}) 暫定${c.ai_score||0}点
+   根拠:${evidence} シグナル:${sig}`;
+  }).join('\n');
+
+  const prompt = `# 商材
+${productText}
+
+# 候補${topCompanies.length}社 (個別評価済)
+${list}
+
+# タスク
+これら全社を相対比較して、最も購買確度が高い順に並び替え、各社の最終スコアを0-100で付け直してください。
+- 個別評価のばらつきや過剰評価/過小評価を是正
+- 商材の購買決定論理から「この中で誰が一番買いそうか」を厳密に
+- スコアは相対分布(トップから順次下がる、横並びは避ける)
+
+JSONのみ返答:
+{"ranking": [{"i": 1, "final_score": 92, "reason": "理由20字"}, ...]}`;
+
+  try {
+    const text = await callClaude({
+      system: sys, prompt,
+      model: 'claude-opus-4-7',
+      max_tokens: 3000,
+      thinking: { type: 'enabled', budget_tokens: 6000 },
+      temperature: 1.0,
+    });
+    incrementUsage('ai', 5); // 大きいプロンプト + thinking
+    // 末尾JSON抽出
+    const matches = [...text.matchAll(/\{[\s\S]*?"ranking"[\s\S]*?\]\s*\}/g)];
+    let obj = null;
+    for (const m of matches) {
+      try { obj = JSON.parse(m[0]); } catch {}
+    }
+    if (!obj || !Array.isArray(obj.ranking)) return;
+    // スコア反映
+    for (const r of obj.ranking) {
+      const idx = parseInt(r.i, 10) - 1;
+      if (idx >= 0 && idx < topCompanies.length) {
+        const c = topCompanies[idx];
+        const newScore = Math.max(0, Math.min(100, parseInt(r.final_score, 10) || 0));
+        c.ai_score_pre_rerank = c.ai_score;
+        c.ai_score = newScore;
+        c.ai_rerank_reason = r.reason || '';
+        c._reranked = true;
+        // store に反映
+        const target = store.importedCompanies.find(x => x.id === c.id);
+        if (target) {
+          target.ai_score_pre_rerank = c.ai_score_pre_rerank;
+          target.ai_score = newScore;
+          target.ai_rerank_reason = r.reason || '';
+          target._reranked = true;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('rerankTopCandidates failed', e);
+  }
 }
 
 function queryCandidates_count(stats, _foundLen, validated) {
@@ -3694,6 +3789,10 @@ async function enrichCompanyDeep(c, productText) {
     // 品質モード時はHPテキストをより多く渡す(6KBまで)
     const isHigh = store.opts.qualityMode !== false;
     const hpText = collectedTexts.join('\n').slice(0, isHigh ? 8000 : 3500);
+    // 活動性シグナル(廃業/最近の更新/採用の有無)
+    const activeness = detectActivenessSignals(hpText);
+    best.activeness = activeness.active;
+    best.activeness_signals = activeness.signals;
     const ai = await aiScoreCompany(best, productText, hpText, { qualityMode: isHigh });
     if (ai) {
       best.ai_score = ai.score;
@@ -3738,6 +3837,14 @@ async function enrichCompanyDeep(c, productText) {
       // AI が「対象地域外」と判定したらフラグ(isRegionMismatchが拾う)
       if (ai.in_target_region === false) {
         best._ai_region_reject = true;
+      }
+      // 廃業シグナル検知時は AIスコアを大きく減点 (架電しても出ない)
+      if (best.activeness === 'inactive') {
+        best.ai_score = Math.max(0, (best.ai_score || 0) - 60);
+        best.ai_reasoning = `[活動停止シグナル検出] ${best.ai_reasoning || ''}`;
+      } else if (best.activeness === 'unknown' && (best.ai_score || 0) > 60) {
+        // 活動性不明で高スコアは少し下げる(リスク調整)
+        best.ai_score = Math.max(0, (best.ai_score || 0) - 10);
       }
     }
   }
@@ -4148,6 +4255,41 @@ JSONのみ返答:
     console.warn('aiScoreStage1Quick failed', company.name, e);
     return null;
   }
+}
+
+// HPテキストから「会社が活動中か」を推定するシグナル抽出
+// - 最近の日付言及があるか
+// - ブログ/ニュースの直近更新
+// - 「廃業」「事業終了」等のネガティブシグナル
+function detectActivenessSignals(hpText) {
+  if (!hpText) return { active: 'unknown', signals: [] };
+  const signals = [];
+  // 直近2年以内の年月言及
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const lastYear = currentYear - 1;
+  const recentDatePattern = new RegExp(`(${currentYear}|${lastYear})年[\\s\\d]{0,5}月`, 'g');
+  const recentMatches = hpText.match(recentDatePattern) || [];
+  if (recentMatches.length > 0) signals.push(`recent_date:${recentMatches.length}`);
+  // ニュース・お知らせのキーワード周辺
+  const newsKeywords = ['お知らせ', 'ニュース', 'NEWS', 'プレスリリース', '更新情報'];
+  for (const kw of newsKeywords) {
+    if (hpText.includes(kw)) signals.push(`has_${kw}`);
+  }
+  // 採用関連 (継続活動の強いシグナル)
+  if (/採用情報|新卒採用|中途採用|キャリア採用|求人募集/.test(hpText)) signals.push('hiring');
+  // ネガティブシグナル
+  const negativePatterns = [/廃業/, /事業.{0,3}終了/, /営業.{0,3}終了/, /閉店/, /閉鎖/];
+  let negative = false;
+  for (const p of negativePatterns) {
+    if (p.test(hpText)) { signals.push('dormant_signal'); negative = true; break; }
+  }
+  let activeness;
+  if (negative) activeness = 'inactive';
+  else if (recentMatches.length >= 2 || signals.includes('hiring')) activeness = 'active';
+  else if (recentMatches.length > 0) activeness = 'maybe_active';
+  else activeness = 'unknown';
+  return { active: activeness, signals };
 }
 
 // Stage 3: 深い適合度評価 (Opus + extended thinking + 引用必須)
