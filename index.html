@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260514q">
+<link rel="stylesheet" href="style.css?v=20260514r">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -164,6 +164,59 @@
       <p class="empty" style="font-size:11px;line-height:1.5;margin-top:6px;">
         ⚠️ APIキーはブラウザのlocalStorageにのみ保存され、Anthropic以外には送信されません。共有端末では使用しないでください。
       </p>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false" id="account-section">
+    <div class="side-head"><span>👤 アカウント</span></div>
+    <div class="side-body">
+      <div id="account-email" class="muted" style="font-size:12px;word-break:break-all">未ログイン</div>
+      <div id="account-status" class="muted" style="font-size:11px;margin-top:4px"></div>
+      <button class="side-btn ghost" id="open-login-btn" style="font-size:12px">ログイン / 切替</button>
+      <button class="side-btn" id="signout-btn" style="font-size:12px;display:none">ログアウト</button>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="true" id="billing-section">
+    <div class="side-head"><span>💴 今月の利用料金</span></div>
+    <div class="side-body">
+      <div id="billing-period" class="muted" style="font-size:11px"></div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:6px">
+        <tr><td>基本料金</td><td style="text-align:right" id="bill-base">¥0</td></tr>
+        <tr><td>Web検索 <small id="bill-search-count" class="muted"></small></td><td style="text-align:right" id="bill-search">¥0</td></tr>
+        <tr><td>AI評価 <small id="bill-ai-count" class="muted"></small></td><td style="text-align:right" id="bill-ai">¥0</td></tr>
+        <tr><td>HP取得 <small id="bill-fetch-count" class="muted"></small></td><td style="text-align:right" id="bill-fetch">¥0</td></tr>
+        <tr style="border-top:1px solid var(--border);font-weight:600"><td>今月合計</td><td style="text-align:right;color:var(--accent)" id="bill-total">¥0</td></tr>
+      </table>
+      <div id="bill-limit-warn" style="font-size:11px;color:var(--danger);margin-top:6px;display:none"></div>
+    </div>
+  </div>
+
+  <div class="sidebar-section collapsible" data-open="false" id="admin-section" style="display:none">
+    <div class="side-head"><span>🔧 管理者: 課金設定</span></div>
+    <div class="side-body">
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>月額基本料金(円)</span>
+        <input type="number" id="price-base" min="0" step="1000" value="50000">
+      </label>
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>Web検索 単価(円/1クエリ)</span>
+        <input type="number" id="price-search" min="0" step="0.01" value="0.5">
+      </label>
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>AI評価 単価(円/1社)</span>
+        <input type="number" id="price-ai" min="0" step="0.01" value="2">
+      </label>
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>HP取得 単価(円/1URL)</span>
+        <input type="number" id="price-fetch" min="0" step="0.01" value="0.1">
+      </label>
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>月額利用上限(円, 0=無制限)</span>
+        <input type="number" id="price-cap" min="0" step="1000" value="0">
+      </label>
+      <label class="kv"><span>上限到達で検索停止</span>
+        <input type="checkbox" id="price-hard-cap" checked>
+      </label>
+      <button class="side-btn" id="price-save" style="margin-top:8px">課金設定を保存</button>
+      <div id="price-status" class="muted" style="font-size:11px;margin-top:4px"></div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+      <div style="font-size:11px;color:var(--muted)">※ 設定は全ユーザー共通で適用されます。<br>※ <code>firebase-config.js</code> の <code>ADMIN_EMAILS</code> に登録された<br>メールアドレスでのみ表示されます。</div>
     </div>
   </div>
 
@@ -506,6 +559,32 @@
   </div>
 </div>
 
+<div id="login-modal" class="modal" hidden>
+  <div class="modal-content" style="max-width:420px">
+    <h3 id="login-title">tell partner ログイン</h3>
+    <p class="muted" style="font-size:13px;margin-bottom:12px" id="login-mode-hint">アカウントにログインしてください</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>メールアドレス</span>
+        <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email">
+      </label>
+      <label class="kv" style="flex-direction:column;align-items:stretch"><span>パスワード (6文字以上)</span>
+        <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+      </label>
+      <div id="login-error" style="color:var(--danger);font-size:12px;min-height:18px"></div>
+    </div>
+    <div class="modal-actions" style="flex-direction:column;gap:6px">
+      <button id="login-submit" style="width:100%">ログイン</button>
+      <div style="display:flex;gap:8px;width:100%">
+        <button id="login-switch" class="ghost" style="flex:1;font-size:12px">新規登録に切替</button>
+        <button id="login-reset" class="ghost" style="flex:1;font-size:12px">パスワード再設定</button>
+      </div>
+      <div id="login-offline" style="font-size:11px;color:var(--muted);text-align:center;margin-top:8px">
+        ※ Firebase未設定時はローカルモードで動作します
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="tos-modal" class="modal" hidden>
   <div class="modal-content wide">
     <h3>利用規約 / コンプライアンス同意</h3>
@@ -552,7 +631,9 @@
   </div>
 </div>
 
-<script src="data/regions.js?v=20260514q"></script>
-<script src="app.js?v=20260514q"></script>
+<script src="firebase-config.js?v=20260514r"></script>
+<script type="module" src="firebase-sync.js?v=20260514r"></script>
+<script src="data/regions.js?v=20260514r"></script>
+<script src="app.js?v=20260514r"></script>
 </body>
 </html>

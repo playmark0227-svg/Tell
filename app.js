@@ -1131,6 +1131,15 @@ const store = {
   usageLog: [],      // { t, action, ref, meta } 監査用ログ(最新1000件)
   tosAccepted: false,
   tosAcceptedAt: 0,
+  // 課金: 当月の集計値. { ym: '2026-05', searches, aiEvals, hpFetches, costYen }
+  billing: {
+    currentMonth: '',
+    searches: 0,
+    aiEvals: 0,
+    hpFetches: 0,
+  },
+  // 課金設定(管理者がFirestore経由で全ユーザー共通設定として変更可)
+  billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
   opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2 },
 };
 
@@ -1154,6 +1163,8 @@ function loadStore() {
     store.usageLog = Array.isArray(d.usageLog) ? d.usageLog : [];
     store.tosAccepted = d.tosAccepted === true;
     store.tosAcceptedAt = d.tosAcceptedAt || 0;
+    if (d.billing) store.billing = { ...store.billing, ...d.billing };
+    if (d.billingConfig) store.billingConfig = d.billingConfig;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1193,9 +1204,13 @@ function _saveStoreImpl() {
     usageLog: store.usageLog || [],
     tosAccepted: store.tosAccepted,
     tosAcceptedAt: store.tosAcceptedAt,
+    billing: store.billing,
+    billingConfig: store.billingConfig,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+  // Firestoreにもsync (ログイン済なら)
+  if (window._fbSyncToFirestore) window._fbSyncToFirestore(d);
 }
 
 /* ============ 使用ログ(監査用) ============ */
@@ -1204,6 +1219,325 @@ function logAction(action, ref = '', meta = null) {
   store.usageLog.unshift({ t: Date.now(), action, ref: String(ref).slice(0, 200), meta: meta ? String(JSON.stringify(meta)).slice(0, 300) : null });
   // 直近1000件のみ保持(localStorage肥大化防止)
   if (store.usageLog.length > 1000) store.usageLog.length = 1000;
+}
+
+/* ============ 課金 (使用量カウント + 月次集計 + 上限) ============ */
+function currentYM() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+function ensureBillingMonth() {
+  if (!store.billing) {
+    store.billing = { currentMonth: '', searches: 0, aiEvals: 0, hpFetches: 0 };
+  }
+  const ym = currentYM();
+  if (store.billing.currentMonth !== ym) {
+    // 月が変わったらリセット
+    store.billing = { currentMonth: ym, searches: 0, aiEvals: 0, hpFetches: 0 };
+  }
+}
+
+function getBillingConfig() {
+  return store.billingConfig || window.DEFAULT_BILLING_CONFIG || {
+    baseMonthly: 50000, perSearch: 0.5, perAiEvaluation: 2.0, perHpFetch: 0.1,
+    monthlyCap: 0, hardCap: true,
+  };
+}
+
+function calcCurrentBill() {
+  ensureBillingMonth();
+  const cfg = getBillingConfig();
+  const b = store.billing;
+  const baseCost = cfg.baseMonthly || 0;
+  const searchCost = (b.searches || 0) * (cfg.perSearch || 0);
+  const aiCost = (b.aiEvals || 0) * (cfg.perAiEvaluation || 0);
+  const fetchCost = (b.hpFetches || 0) * (cfg.perHpFetch || 0);
+  return {
+    base: Math.round(baseCost),
+    search: Math.round(searchCost),
+    ai: Math.round(aiCost),
+    fetch: Math.round(fetchCost),
+    total: Math.round(baseCost + searchCost + aiCost + fetchCost),
+    overCap: false,
+    cap: cfg.monthlyCap || 0,
+  };
+}
+
+function isBillingCapped() {
+  const cfg = getBillingConfig();
+  if (!cfg.monthlyCap || !cfg.hardCap) return false;
+  const bill = calcCurrentBill();
+  return bill.total >= cfg.monthlyCap;
+}
+
+function incrementUsage(kind, count = 1) {
+  ensureBillingMonth();
+  if (kind === 'search') store.billing.searches = (store.billing.searches || 0) + count;
+  else if (kind === 'ai') store.billing.aiEvals = (store.billing.aiEvals || 0) + count;
+  else if (kind === 'fetch') store.billing.hpFetches = (store.billing.hpFetches || 0) + count;
+  renderBillingPanel();
+}
+
+function renderBillingPanel() {
+  ensureBillingMonth();
+  const bill = calcCurrentBill();
+  const cfg = getBillingConfig();
+  const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setText('billing-period', `${store.billing.currentMonth} (${new Date().getDate()}日時点)`);
+  setText('bill-base', yen(bill.base));
+  setText('bill-search', yen(bill.search));
+  setText('bill-ai', yen(bill.ai));
+  setText('bill-fetch', yen(bill.fetch));
+  setText('bill-total', yen(bill.total));
+  setText('bill-search-count', `${(store.billing.searches||0).toLocaleString()}回`);
+  setText('bill-ai-count', `${(store.billing.aiEvals||0).toLocaleString()}件`);
+  setText('bill-fetch-count', `${(store.billing.hpFetches||0).toLocaleString()}回`);
+  const warn = document.getElementById('bill-limit-warn');
+  if (warn) {
+    if (cfg.monthlyCap && bill.total >= cfg.monthlyCap) {
+      warn.style.display = 'block';
+      warn.textContent = cfg.hardCap
+        ? `⚠ 月額利用上限(${yen(cfg.monthlyCap)})に到達。検索停止中。`
+        : `⚠ 月額利用上限(${yen(cfg.monthlyCap)})を超過しています。`;
+    } else if (cfg.monthlyCap && bill.total >= cfg.monthlyCap * 0.8) {
+      warn.style.display = 'block';
+      warn.style.color = 'var(--mid)';
+      warn.textContent = `⚠ 上限の80%に到達 (${yen(bill.total)} / ${yen(cfg.monthlyCap)})`;
+    } else {
+      warn.style.display = 'none';
+    }
+  }
+}
+
+/* ============ Firebase 同期 (firebase-sync.js が読み込まれてから動く) ============ */
+let _currentFbUser = null;
+let _fbSaveTimer = null;
+let _fbSavePending = null;
+
+function isAdminUser() {
+  if (!_currentFbUser || !_currentFbUser.email) return false;
+  const admins = window.ADMIN_EMAILS || [];
+  return admins.includes(_currentFbUser.email);
+}
+
+window._fbSyncToFirestore = function(data) {
+  if (!_currentFbUser || !window.firebaseApi) return;
+  _fbSavePending = data;
+  // 3秒デバウンスでFirestore書込(料金もかかるし頻繁に呼ぶ意味ない)
+  if (_fbSaveTimer) return;
+  _fbSaveTimer = setTimeout(async () => {
+    _fbSaveTimer = null;
+    const toSave = _fbSavePending;
+    _fbSavePending = null;
+    try {
+      await window.firebaseApi.saveUserState(_currentFbUser.uid, toSave);
+    } catch (e) {
+      console.warn('[firebase] save failed', e);
+    }
+  }, 3000);
+};
+
+async function applyFirebaseUserState(remoteData) {
+  if (!remoteData) return;
+  // ローカルと remote 両方ある場合 → remote 優先(他端末で更新された可能性)
+  // ただし usageLog だけはマージ(各端末で発生したログを保持)
+  const mergedLog = [...(remoteData.usageLog || []), ...(store.usageLog || [])]
+    .sort((a, b) => b.t - a.t)
+    .filter((e, i, arr) => i === 0 || e.t !== arr[i-1].t)
+    .slice(0, 1000);
+  // 課金カウント: 月が同じなら remote 優先、違うなら local 優先(同期遅延考慮)
+  let mergedBilling = remoteData.billing || store.billing;
+  if (remoteData.billing && store.billing && remoteData.billing.currentMonth === store.billing.currentMonth) {
+    // 多端末で同月カウントの場合、大きい方を採用(失われない方向で)
+    mergedBilling = {
+      currentMonth: remoteData.billing.currentMonth,
+      searches: Math.max(remoteData.billing.searches || 0, store.billing.searches || 0),
+      aiEvals: Math.max(remoteData.billing.aiEvals || 0, store.billing.aiEvals || 0),
+      hpFetches: Math.max(remoteData.billing.hpFetches || 0, store.billing.hpFetches || 0),
+    };
+  }
+  store.saved = new Set(remoteData.saved || []);
+  store.dnc = new Set(remoteData.dnc || []);
+  store.dncPhones = new Set(remoteData.dncPhones || []);
+  store.status = remoteData.status || {};
+  store.notes = remoteData.notes || {};
+  store.history = remoteData.history || [];
+  store.customCompanies = remoteData.customCompanies || [];
+  store.importedCompanies = remoteData.importedCompanies || [];
+  store.callRecords = remoteData.callRecords || {};
+  store.followUps = remoteData.followUps || [];
+  store.profiles = remoteData.profiles || [];
+  store.activeProfile = remoteData.activeProfile || null;
+  store.usageLog = mergedLog;
+  store.tosAccepted = remoteData.tosAccepted === true;
+  store.tosAcceptedAt = remoteData.tosAcceptedAt || 0;
+  store.billing = mergedBilling;
+  store.billingConfig = remoteData.billingConfig || store.billingConfig;
+  store.opts = { ...store.opts, ...(remoteData.opts || {}) };
+}
+
+async function onFirebaseSignedIn(user) {
+  _currentFbUser = user;
+  updateAccountUI();
+  try {
+    const remote = await window.firebaseApi.loadUserState(user.uid);
+    if (remote) {
+      await applyFirebaseUserState(remote);
+    } else {
+      // 初回ログイン: 既存のローカル state を初期データとしてpush
+      await window.firebaseApi.saveUserState(user.uid, JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'));
+    }
+  } catch (e) {
+    console.warn('[firebase] initial load failed', e);
+  }
+  // UI再描画
+  renderAll();
+}
+
+function onFirebaseSignedOut() {
+  _currentFbUser = null;
+  updateAccountUI();
+  // ローカルキャッシュは残す(再ログイン時にも見える)
+}
+
+function updateAccountUI() {
+  const emailEl = document.getElementById('account-email');
+  const statusEl = document.getElementById('account-status');
+  const openBtn = document.getElementById('open-login-btn');
+  const outBtn = document.getElementById('signout-btn');
+  const adminSec = document.getElementById('admin-section');
+  if (_currentFbUser) {
+    if (emailEl) emailEl.textContent = _currentFbUser.email;
+    if (statusEl) statusEl.textContent = `クラウド同期中 (${isAdminUser() ? '管理者' : '一般ユーザー'})`;
+    if (openBtn) openBtn.style.display = 'none';
+    if (outBtn) outBtn.style.display = '';
+    if (adminSec) adminSec.style.display = isAdminUser() ? '' : 'none';
+  } else {
+    if (emailEl) emailEl.textContent = window.FIREBASE_READY ? '未ログイン (ローカルモード)' : 'ローカルモード';
+    if (statusEl) statusEl.textContent = window.FIREBASE_READY ? 'ログインしてクラウド同期' : 'Firebase未設定';
+    if (openBtn) openBtn.style.display = window.FIREBASE_READY ? '' : 'none';
+    if (outBtn) outBtn.style.display = 'none';
+    if (adminSec) adminSec.style.display = 'none';
+  }
+}
+
+function renderAll() {
+  try {
+    if (state.icp) {
+      const allCompanies = getAllCompanies();
+      state.scored = allCompanies
+        .map(co => scoreCompany(co, state.icp, state.strategy, state.intentSignals))
+        .sort((a, b) => b.score - a.score);
+    }
+    renderResults();
+    renderSidebar();
+    renderRegionChips();
+    renderBillingPanel();
+  } catch (e) { console.warn('renderAll failed', e); }
+}
+
+/* ============ ログインモーダル ============ */
+function setupLoginModal() {
+  const modal = document.getElementById('login-modal');
+  const emailIn = document.getElementById('login-email');
+  const passIn = document.getElementById('login-password');
+  const errEl = document.getElementById('login-error');
+  const submitBtn = document.getElementById('login-submit');
+  const switchBtn = document.getElementById('login-switch');
+  const resetBtn = document.getElementById('login-reset');
+  const openBtn = document.getElementById('open-login-btn');
+  const outBtn = document.getElementById('signout-btn');
+  const titleEl = document.getElementById('login-title');
+  const hintEl = document.getElementById('login-mode-hint');
+  let mode = 'login'; // 'login' | 'signup'
+
+  const setMode = (m) => {
+    mode = m;
+    titleEl.textContent = m === 'signup' ? 'tell partner 新規登録' : 'tell partner ログイン';
+    hintEl.textContent = m === 'signup' ? 'メール+パスワード(6文字以上)で新規登録' : 'アカウントにログインしてください';
+    submitBtn.textContent = m === 'signup' ? '新規登録' : 'ログイン';
+    switchBtn.textContent = m === 'signup' ? 'ログインに切替' : '新規登録に切替';
+    errEl.textContent = '';
+  };
+
+  if (switchBtn) switchBtn.addEventListener('click', () => setMode(mode === 'signup' ? 'login' : 'signup'));
+
+  if (submitBtn) submitBtn.addEventListener('click', async () => {
+    if (!window.firebaseApi) { errEl.textContent = 'Firebase未設定'; return; }
+    const email = emailIn.value.trim();
+    const pass = passIn.value;
+    if (!email || !pass) { errEl.textContent = 'メールとパスワードを入力'; return; }
+    submitBtn.disabled = true;
+    errEl.textContent = '';
+    try {
+      if (mode === 'signup') {
+        await window.firebaseApi.signUp(email, pass);
+      } else {
+        await window.firebaseApi.signIn(email, pass);
+      }
+      modal.hidden = true;
+      passIn.value = '';
+    } catch (e) {
+      errEl.textContent = `失敗: ${e.code || e.message || ''}`.slice(0, 120);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  if (resetBtn) resetBtn.addEventListener('click', async () => {
+    const email = emailIn.value.trim();
+    if (!email) { errEl.textContent = 'メールを入力してください'; return; }
+    try {
+      await window.firebaseApi.resetPassword(email);
+      errEl.style.color = 'var(--good)';
+      errEl.textContent = `パスワード再設定メールを ${email} に送信しました`;
+    } catch (e) {
+      errEl.style.color = 'var(--danger)';
+      errEl.textContent = `失敗: ${e.code || e.message}`;
+    }
+  });
+
+  if (openBtn) openBtn.addEventListener('click', () => { setMode('login'); modal.hidden = false; });
+  if (outBtn) outBtn.addEventListener('click', async () => {
+    if (!confirm('ログアウトしますか？(ローカルキャッシュは残ります)')) return;
+    try { await window.firebaseApi.signOut(); } catch (e) { console.warn(e); }
+  });
+}
+
+/* ============ 管理者: 課金設定パネル ============ */
+function setupAdminPanel() {
+  const cfg = getBillingConfig();
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  setVal('price-base', cfg.baseMonthly);
+  setVal('price-search', cfg.perSearch);
+  setVal('price-ai', cfg.perAiEvaluation);
+  setVal('price-fetch', cfg.perHpFetch);
+  setVal('price-cap', cfg.monthlyCap || 0);
+  const hardCb = document.getElementById('price-hard-cap');
+  if (hardCb) hardCb.checked = cfg.hardCap !== false;
+  const saveBtn = document.getElementById('price-save');
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    const newCfg = {
+      baseMonthly: Math.max(0, parseFloat(document.getElementById('price-base').value) || 0),
+      perSearch: Math.max(0, parseFloat(document.getElementById('price-search').value) || 0),
+      perAiEvaluation: Math.max(0, parseFloat(document.getElementById('price-ai').value) || 0),
+      perHpFetch: Math.max(0, parseFloat(document.getElementById('price-fetch').value) || 0),
+      monthlyCap: Math.max(0, parseFloat(document.getElementById('price-cap').value) || 0),
+      hardCap: document.getElementById('price-hard-cap').checked,
+    };
+    store.billingConfig = newCfg;
+    logAction('billing_config_changed', JSON.stringify(newCfg));
+    saveStore();
+    renderBillingPanel();
+    const status = document.getElementById('price-status');
+    if (status) {
+      status.style.color = 'var(--good)';
+      status.textContent = `✓ 保存しました (${new Date().toLocaleString('ja-JP')})`;
+      setTimeout(() => { status.textContent = ''; }, 4000);
+    }
+  });
 }
 
 /* ============ Actions ============ */
@@ -2193,6 +2527,7 @@ async function braveSearchOnce(query, count = 20, offset = 0) {
   }
   if (!res.ok) throw new Error(`Brave API ${res.status}: ${(await res.text()).slice(0,150)}`);
   const data = await res.json();
+  incrementUsage('search', 1);
   return (data.web?.results || []);
 }
 
@@ -2346,6 +2681,7 @@ async function fetchPageViaProxy(targetUrl) {
       headers: { 'Accept': 'text/html' },
     });
     if (!res.ok) return null;
+    incrementUsage('fetch', 1);
     return await res.text();
   } catch (e) {
     return null;
@@ -2889,6 +3225,7 @@ JSONのみ返答:
 {"is_company": true|false, "name": "株式会社XXX or null", "name_valid": true|false, "phone": "03-1234-5678 or null", "phone_valid": true|false, "score": 0-100, "reasoning": "..."}`;
   try {
     const text = await callClaude({ system: sys, prompt, max_tokens: 500 });
+    incrementUsage('ai', 1);
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const obj = JSON.parse(m[0]);
@@ -3358,6 +3695,24 @@ async function init() {
   if (store.opts.dark) document.documentElement.setAttribute('data-theme', 'dark');
   // 初回起動時は利用規約モーダル
   setupTosModal();
+  setupLoginModal();
+  setupAdminPanel();
+  renderBillingPanel();
+  // Firebase 連携
+  const wireFirebase = () => {
+    if (!window.firebaseApi) return;
+    window.firebaseApi.onAuthStateChanged((user) => {
+      if (user) onFirebaseSignedIn(user);
+      else onFirebaseSignedOut();
+    });
+  };
+  if (window.FIREBASE_READY) {
+    wireFirebase();
+  } else {
+    // firebase-sync.js が後から読み込まれる場合
+    window.addEventListener('firebase-ready', wireFirebase, { once: true });
+  }
+  updateAccountUI();
 
   document.getElementById('opt-dark').addEventListener('change', e => {
     store.opts.dark = e.target.checked;
@@ -3476,6 +3831,10 @@ async function init() {
     const input = document.getElementById('product-input').value.trim();
     if (!input) { alert('商材を入力してください'); return; }
     if (!requireTosAccepted()) return;
+    if (isBillingCapped()) {
+      alert(`今月の利用上限(¥${(getBillingConfig().monthlyCap||0).toLocaleString()})に到達しています。\n管理者にお問い合わせください。`);
+      return;
+    }
     if (state.continuousSearch) {
       // 既に検索中 → 停止
       state.continuousSearch = false;
