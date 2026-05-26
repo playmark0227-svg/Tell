@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515g">
+<link rel="stylesheet" href="style.css?v=20260515h">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -244,6 +244,10 @@
           <label class="kv" style="flex-direction:column;align-items:stretch" title="該当する企業を AI が自動的に競合扱いします。1行1社"><span>⛔ 既知の競合企業 (改行区切り)</span>
             <textarea id="ma-known-competitors" placeholder="株式会社○○&#10;△△ホールディングス" style="min-height:60px;font-family:monospace;font-size:12px"></textarea>
           </label>
+          <label class="kv" title="Opus + Sonnet の2モデル合議で評価。コスト2倍だが信頼性最大。重要案件向け">
+            <span>🎯 マルチモデルアンサンブル<br><small style="color:var(--muted);font-weight:normal">Opus + Sonnet 合議で更に厳密評価</small></span>
+            <input type="checkbox" id="ma-ensemble-mode">
+          </label>
           <button class="side-btn" id="ma-conn-save" style="margin-top:12px;background:var(--accent);color:#fff">この接続設定を全ユーザーに配信</button>
           <div id="ma-conn-status" class="muted" style="font-size:12px;margin-top:6px"></div>
         </div>
@@ -367,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515g</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515h</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -865,9 +869,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515g"></script>
-<script type="module" src="firebase-sync.js?v=20260515g"></script>
-<script src="data/regions.js?v=20260515g"></script>
-<script src="app.js?v=20260515g"></script>
+<script src="firebase-config.js?v=20260515h"></script>
+<script type="module" src="firebase-sync.js?v=20260515h"></script>
+<script src="data/regions.js?v=20260515h"></script>
+<script src="app.js?v=20260515h"></script>
 </body>
 </html>

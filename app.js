@@ -1128,6 +1128,7 @@ function renderRow(c) {
         ${c.activeness === 'inactive' ? `<div class="meta-tag warn" title="廃業・事業終了シグナル検出">💤 活動停止?</div>` : ''}
         ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
         ${c.is_competitor ? `<div class="meta-tag warn" title="競合企業(同種商材を販売)・架電厳禁: ${c.competitor_evidence||''}" style="background:rgba(220,0,0,.1);color:var(--danger);border-color:var(--danger)">⛔ 競合</div>` : ''}
+        ${c._ensemble ? `<div class="meta-tag good" title="Opus(${c._ensemble.opus_score})+Sonnet(${c._ensemble.sonnet_score})の合議 ${c._ensemble.disagree?'⚠ 評価が割れた':'一致'}">🎯 合議</div>` : ''}
       </td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">
@@ -1795,6 +1796,7 @@ async function loadAndApplySystemConfig() {
       if (pub.aiModel) store.opts.aiModel = pub.aiModel;
       if (typeof pub.defaultBravePages === 'number') store.opts.bravePages = pub.defaultBravePages;
       if (typeof pub.qualityMode === 'boolean') store.opts.qualityMode = pub.qualityMode;
+      if (typeof pub.ensembleMode === 'boolean') store.opts.ensembleMode = pub.ensembleMode;
       if (Array.isArray(pub.knownCompetitors)) store.opts.knownCompetitors = pub.knownCompetitors;
       if (pub.billingConfig) store.billingConfig = pub.billingConfig;
       // UIの値を反映
@@ -1900,6 +1902,8 @@ async function openMasterAdmin() {
     const list = _systemPublicConfig?.knownCompetitors || store.opts.knownCompetitors || [];
     kcEl.value = Array.isArray(list) ? list.join('\n') : '';
   }
+  const emEl = document.getElementById('ma-ensemble-mode');
+  if (emEl) emEl.checked = (_systemPublicConfig?.ensembleMode === true) || (store.opts.ensembleMode === true);
   // APIキー
   setVal('ma-anthropic-key', (_systemAdminConfig && _systemAdminConfig.anthropicKey) || '');
   setVal('ma-brave-key', (_systemAdminConfig && _systemAdminConfig.braveKey) || '');
@@ -1926,6 +1930,7 @@ async function saveConnectionConfig() {
     aiModel: document.getElementById('ma-ai-model').value,
     defaultBravePages: parseInt(document.getElementById('ma-default-pages').value, 10) || 2,
     qualityMode: document.getElementById('ma-quality-mode').checked,
+    ensembleMode: document.getElementById('ma-ensemble-mode')?.checked === true,
     knownCompetitors: competitors,
     billingConfig: getBillingConfig(),
   };
@@ -1937,6 +1942,7 @@ async function saveConnectionConfig() {
     if (cfg.aiModel) store.opts.aiModel = cfg.aiModel;
     if (cfg.defaultBravePages) store.opts.bravePages = cfg.defaultBravePages;
     store.opts.qualityMode = cfg.qualityMode;
+    store.opts.ensembleMode = cfg.ensembleMode;
     store.opts.knownCompetitors = cfg.knownCompetitors;
     saveStore();
     logAction('system_public_config_saved', JSON.stringify(cfg));
@@ -4651,8 +4657,12 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
   }
 
   // Stage 3: Opus + extended thinking で深い適合度評価 + 引用必須
+  // ensembleMode 時は Opus + Sonnet の合議で更に信頼性UP
+  const useEnsemble = store.opts.ensembleMode === true;
   try {
-    const stage3 = await aiScoreStage3Deep(company, productText, hpText, stage1, houjin);
+    const stage3 = useEnsemble
+      ? await aiScoreStage3Ensemble(company, productText, hpText, stage1, houjin)
+      : await aiScoreStage3Deep(company, productText, hpText, stage1, houjin);
     if (!stage3) return stage1;
 
     // Stage 4: 自己整合性チェック - 境界域(45-75)のスコアはノイズが大きいので2回目を走らせて median を取る
@@ -4696,6 +4706,7 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
       talking_points: stage3.talking_points,
       _used_deep_eval: true,
       _self_consistency_checked: secondConfidence !== null,
+      _ensemble: stage3._ensemble || null,
     };
   } catch (e) {
     console.warn('stage3 failed, fallback to stage1', e);
@@ -4903,10 +4914,43 @@ function detectActivenessSignals(hpText) {
   return { active: activeness, signals };
 }
 
+// マルチモデルアンサンブル: Opus と Sonnet の両方で Stage3 を実行して合議
+// 真の信頼性が必要な場合のみ呼ぶ (コストは概ね 2倍)
+async function aiScoreStage3Ensemble(company, productText, hpText, stage1, houjin) {
+  const [opus, sonnet] = await Promise.all([
+    aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-opus-4-7').catch(() => null),
+    aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-sonnet-4-6').catch(() => null),
+  ]);
+  if (!opus && !sonnet) return null;
+  if (!opus) return sonnet;
+  if (!sonnet) return opus;
+
+  // 合議: 重み付き平均 (Opus 60%, Sonnet 40%)
+  const avgScore = Math.round(opus.score * 0.6 + sonnet.score * 0.4);
+  // 大きく食い違う(20点以上)→ 確信度を下げる
+  const disagree = Math.abs(opus.score - sonnet.score) >= 20;
+  // 競合フラグは両方一致したときのみ採用
+  const competitorConsensus = opus.is_competitor && sonnet.is_competitor;
+  // citations は両方からマージ
+  const mergedCitations = [...(opus.fit_citations || []), ...(sonnet.fit_citations || [])].slice(0, 6);
+  // buying_signals もマージ
+  const mergedSignals = [...new Set([...(opus.buying_signals || []), ...(sonnet.buying_signals || [])])].slice(0, 8);
+
+  return {
+    ...opus,
+    score: avgScore,
+    confidence: disagree ? 'low' : opus.confidence,
+    is_competitor: competitorConsensus,
+    fit_citations: mergedCitations,
+    buying_signals: mergedSignals,
+    _ensemble: { opus_score: opus.score, sonnet_score: sonnet.score, disagree },
+  };
+}
+
 // Stage 3: 深い適合度評価 (Opus + extended thinking + 引用必須)
 // 高品質モードで実行。Stage1 で通過した候補のみ呼ばれる前提。
 // 商材ニーズの根拠を HP テキストから「引用付き」で抽出し、購買シグナルを精査する。
-async function aiScoreStage3Deep(company, productText, hpText, stage1, houjin) {
+async function aiScoreStage3Deep(company, productText, hpText, stage1, houjin, modelOverride) {
   const sys = `あなたは日本のB2B営業における超ベテランのアカウントエグゼクティブです。
 HPテキストを精読し、商材を購入する可能性を「証拠ベース」で厳密に評価します。
 推測や一般論ではなく、HPに書かれている具体的な記述を引用して根拠を示してください。
@@ -5018,15 +5062,18 @@ ${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
     let budget = 8000;
     if (hpText && hpText.length > 5000) budget = 12000;
     if (stage1 && stage1.score >= 40 && stage1.score <= 70) budget = 14000;
+    const useModel = modelOverride || 'claude-opus-4-7';
     const text = await callClaude({
       system: sys,
       prompt,
       max_tokens: 5000,
-      model: 'claude-opus-4-7',
+      model: useModel,
       thinking: { type: 'enabled', budget_tokens: budget },
       temperature: 1.0, // extended thinking時は1.0が必須
     });
-    incrementUsage('ai', budget >= 12000 ? 4 : 3); // 高budget時は単位も多めに計上
+    // Opus は Sonnet より概ね 3-5x のコスト
+    const costMultiplier = useModel.includes('opus') ? (budget >= 12000 ? 4 : 3) : 1;
+    incrementUsage('ai', costMultiplier);
     // 最後の JSON ブロックを抽出
     const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
     if (matches.length === 0) return null;
