@@ -1129,6 +1129,9 @@ function renderRow(c) {
         ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
         ${c.is_competitor ? `<div class="meta-tag warn" title="競合企業(同種商材を販売)・架電厳禁: ${c.competitor_evidence||''}" style="background:rgba(220,0,0,.1);color:var(--danger);border-color:var(--danger)">⛔ 競合</div>` : ''}
         ${c._ensemble ? `<div class="meta-tag good" title="Opus(${c._ensemble.opus_score})+Sonnet(${c._ensemble.sonnet_score})の合議 ${c._ensemble.disagree?'⚠ 評価が割れた':'一致'}">🎯 合議</div>` : ''}
+        ${c._verification === 'strong' ? `<div class="meta-tag good" title="外部${c.cross_source_count||0}サイトから言及・業界認知度高い">🌐 検証済</div>` : ''}
+        ${c._verification === 'weak' ? `<div class="meta-tag warn" title="外部参照ほぼなし(新規/小規模/未公開法人の可能性)">⚠ 参照希薄</div>` : ''}
+        ${c._sitemap_assisted ? `<div class="meta-tag" title="sitemap.xml を解析して情報密度高い独自ページを追加クロール">🗺 Sitemap</div>` : ''}
       </td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">
@@ -2789,6 +2792,10 @@ function openScoreDetailModal(companyId) {
   if (c.official_address) {
     sections.push(`<h4>🆔 国税庁登記情報</h4><p>正式名: ${c.official_name || c.name}<br>本店所在地: ${c.official_address}<br>法人番号: ${c.houjin_bangou}</p>`);
   }
+  if (typeof c.cross_source_count === 'number') {
+    const verifyLabel = { strong: '✓ 強く実在 (5+ 外部参照)', normal: '◯ 標準 (2-4 外部参照)', weak: '⚠ 参照希薄 (1未満)' }[c._verification] || '';
+    sections.push(`<h4>🌐 クロスソース検証</h4><p>${verifyLabel}<br>外部参照ドメイン数: ${c.cross_source_count} サイト</p>`);
+  }
   if (c.ai_score_pre_rerank && c.ai_score_pre_rerank !== c.ai_score) {
     sections.push(`<h4>🏆 リランキング</h4><p>個別評価: ${c.ai_score_pre_rerank}点 → リランキング後: ${c.ai_score}点<br><small>${c.ai_rerank_reason || ''}</small></p>`);
   }
@@ -3654,6 +3661,74 @@ function extractCompanyName(title, url) {
 }
 
 /* ============ HP enrichment via worker /fetch ============ */
+/* ============ sitemap.xml 適応的クロール ============ */
+// 多くのHPは /company, /about 等の標準URLを使うが、独自構造の会社も多い。
+// sitemap.xml を読んで実際のURL構造を把握し、AIに「最も会社情報が濃いページ」を
+// 選ばせることで、無駄なフェッチを減らしつつ重要な情報を取れる。
+
+async function fetchSitemapUrls(baseUrl) {
+  const candidates = ['/sitemap.xml', '/sitemap_index.xml', '/sitemap-index.xml'];
+  for (const path of candidates) {
+    try {
+      const xml = await fetchPageViaProxy(`${baseUrl}${path}`);
+      if (!xml) continue;
+      const urls = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map(m => m[1]).filter(Boolean);
+      if (urls.length > 0) {
+        // sitemap_index の場合、ネストした sitemap も展開 (1段だけ)
+        const subSitemaps = urls.filter(u => /sitemap.*\.xml/i.test(u));
+        const pageUrls = urls.filter(u => !/sitemap.*\.xml/i.test(u));
+        if (subSitemaps.length > 0) {
+          const nested = await Promise.all(subSitemaps.slice(0, 3).map(s => fetchPageViaProxy(s).catch(() => null)));
+          for (const xml2 of nested) {
+            if (!xml2) continue;
+            pageUrls.push(...[...xml2.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map(m => m[1]));
+          }
+        }
+        return pageUrls.slice(0, 500); // 上限500URL
+      }
+    } catch {}
+  }
+  return [];
+}
+
+// AI に sitemap URL リストから「最も会社情報が濃そうな10URL」を選ばせる
+async function aiSelectInfoRichUrls(urls, companyName) {
+  if (!urls || urls.length === 0) return [];
+  if (urls.length <= 10) return urls;
+  // 既に会社情報っぽいURLを優先(キーワードベース粗フィルタ)
+  const KEY = /\/(company|about|profile|info|corporate|history|outline|recruit|career|service|news|press|ir|contact|access|message|gaiyou|enkaku)/i;
+  const NEG = /\/(blog|news\/\d{4}\/\d{2}|posts?\/[a-f0-9-]{20,}|wp-content|tag\/|category\/|search|product\/\w+\/\d+|item\/\d+|\.pdf$|\.jpg$|\.png$)/i;
+  const ranked = urls
+    .filter(u => !NEG.test(u))
+    .sort((a, b) => (KEY.test(b) ? 1 : 0) - (KEY.test(a) ? 1 : 0));
+  // Top50を AI に渡す
+  const top = ranked.slice(0, 50);
+  if (top.length <= 10) return top;
+  try {
+    const prompt = `# 会社: ${companyName}
+# Sitemap から抽出した URL リスト (${top.length}個)
+${top.map((u, i) => `${i+1}. ${u}`).join('\n')}
+
+# タスク
+これらのURLから、「会社概要・代表者情報・所在地・電話番号・事業内容・採用情報」など
+営業判断に役立つ情報が含まれる可能性が高い URL を **最大10個** 選んでください。
+ブログ記事の個別ページ、商品個別ページ、低価値ページは除外。
+
+JSON配列のみで返答 (URLそのまま):
+["url1", "url2", ...]`;
+    const text = await callClaude({ system: 'HP情報密度分析専門家', prompt, max_tokens: 1500 });
+    incrementUsage('ai', 1);
+    const m = text.match(/\[[\s\S]*?\]/);
+    if (!m) return top.slice(0, 10);
+    const picks = JSON.parse(m[0]);
+    if (!Array.isArray(picks)) return top.slice(0, 10);
+    return picks.filter(u => typeof u === 'string').slice(0, 10);
+  } catch (e) {
+    console.warn('aiSelectInfoRichUrls failed', e);
+    return top.slice(0, 10);
+  }
+}
+
 /* ============ HPフェッチキャッシュ (7日 TTL) ============ */
 const HP_CACHE_KEY = 'tell.hp_cache.v1';
 const HP_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7日
@@ -4193,8 +4268,69 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       console.warn('rerank failed', e);
     }
   }
+
+  // Phase 9: 上位企業のクロスソース検証 (品質モード時のみ)
+  // Top10 を会社名単独で検索 → 外部参照数で実在性 + 業界認知度を確認
+  if (store.opts.qualityMode !== false && found.length >= 3) {
+    try {
+      // ai_score 上位10社を取得
+      const sortedTop = [...found].sort((a, b) => (b.ai_score || 0) - (a.ai_score || 0)).slice(0, 10);
+      onProgress?.(`🔍 上位${sortedTop.length}社をクロスソース検証中…`);
+      await verifyTopByCrossSource(sortedTop, onProgress);
+      rescoreFlush();
+      saveStore();
+    } catch (e) {
+      console.warn('cross-source verify failed', e);
+    }
+  }
   onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
   return found;
+}
+
+// 上位企業のクロスソース検証
+// 会社名で単独検索して、自社HP以外の何件のドメインから言及されているかを数える
+// 言及多い = 実在性 + 業界での認知度 + 活動の証拠
+async function verifyTopByCrossSource(topCompanies, onProgress) {
+  if (!topCompanies || topCompanies.length === 0) return;
+  for (let i = 0; i < topCompanies.length; i++) {
+    if (state.searchAborted) break;
+    const c = topCompanies[i];
+    if (!c.name) continue;
+    onProgress?.(`🔍 ${i+1}/${topCompanies.length} ${c.name} を外部参照確認…`);
+    try {
+      const results = await braveSearchOnce(`"${c.name}"`, 10, 0);
+      const ownDomain = rootDomain(c.website || c.source_url || '');
+      const externalDomains = new Set();
+      for (const r of results) {
+        const dom = rootDomain(r.url);
+        if (!dom || dom === ownDomain) continue;
+        if (isExcludedDomain(r.url)) continue;
+        externalDomains.add(dom);
+      }
+      const refCount = externalDomains.size;
+      c.cross_source_count = refCount;
+      // スコア調整
+      if (refCount >= 5) {
+        c.ai_score = Math.min(100, (c.ai_score || 0) + 5);
+        c._verification = 'strong'; // 5+ 外部参照 = 強く実在
+      } else if (refCount >= 2) {
+        c._verification = 'normal';
+      } else {
+        c._verification = 'weak';
+        // 1社の外部参照すらない場合 → スコアを少し下げる
+        c.ai_score = Math.max(0, (c.ai_score || 0) - 5);
+      }
+      // store にも反映
+      const target = store.importedCompanies.find(x => x.id === c.id);
+      if (target) {
+        target.cross_source_count = refCount;
+        target._verification = c._verification;
+        target.ai_score = c.ai_score;
+      }
+    } catch (e) {
+      console.warn('cross-source check failed', c.name, e);
+    }
+  }
 }
 
 // Top候補を Opus で相対比較してスコアを微調整
@@ -4369,6 +4505,23 @@ async function enrichCompanyDeep(c, productText) {
   if (signalUrls.length > 0) {
     const phase3 = await Promise.all(signalUrls.map(u => fetchPageViaProxy(u).catch(() => null)));
     phase3.forEach((html, i) => mergeFromHTML(html, signalUrls[i]));
+  }
+
+  // Phase4: 品質モード + 情報不足時のみ、sitemap.xml から AI 選定で追加クロール
+  // 標準URL(/company等)が空振りした独自構造のHP対策
+  if (store.opts.qualityMode !== false && collectedTexts.join('').length < 3000) {
+    try {
+      const sitemapUrls = await fetchSitemapUrls(baseUrl);
+      if (sitemapUrls.length > 5) {
+        const picked = await aiSelectInfoRichUrls(sitemapUrls, best.name || c.name);
+        const newUrls = picked.filter(u => !priorityUrls.includes(u) && !secondaryUrls.includes(u) && !signalUrls.includes(u));
+        if (newUrls.length > 0) {
+          const phase4 = await Promise.all(newUrls.slice(0, 8).map(u => fetchPageViaProxy(u).catch(() => null)));
+          phase4.forEach((html, i) => mergeFromHTML(html, newUrls[i]));
+          best._sitemap_assisted = true;
+        }
+      }
+    } catch (e) { console.warn('sitemap crawl failed', e); }
   }
 
   best.needs_enrichment = false;
