@@ -1143,7 +1143,7 @@ const store = {
   billingHistory: [],
   // 課金設定(管理者がFirestore経由で全ユーザー共通設定として変更可)
   billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2 },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true },
 };
 
 function loadStore() {
@@ -2540,14 +2540,16 @@ function importJson(file) {
 }
 
 /* ============ Claude API (BYOK) ============ */
-async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
+async function callClaude({ system, prompt, messages, max_tokens = 1024, model, thinking, temperature }) {
   const msgs = messages || [{ role: 'user', content: prompt }];
   const body = {
-    model: store.opts.aiModel || 'claude-haiku-4-5-20251001',
+    model: model || store.opts.aiModel || 'claude-haiku-4-5-20251001',
     max_tokens,
     system,
     messages: msgs,
   };
+  if (thinking) body.thinking = thinking;
+  if (temperature !== undefined) body.temperature = temperature;
 
   // Worker proxy 経由(推奨) - WorkerにANTHROPIC_API_KEYまたはAI bindingがあれば動作
   if (store.opts.braveProxy) {
@@ -2560,6 +2562,10 @@ async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
       });
       if (wres.ok) {
         const data = await wres.json();
+        // extended thinking 使用時は content[] に複数ブロック(thinking + text)が来る
+        // text ブロックの結合を返す
+        const textBlocks = (data.content || []).filter(b => b.type === 'text');
+        if (textBlocks.length > 0) return textBlocks.map(b => b.text || '').join('');
         return data.content?.[0]?.text || '';
       }
       // Workerが失敗 → ブラウザ直接キーがあればフォールバック
@@ -2595,6 +2601,8 @@ async function callClaude({ system, prompt, messages, max_tokens = 1024 }) {
     throw new Error(`Claude API ${res.status}: ${t.slice(0, 200)}`);
   }
   const data = await res.json();
+  const textBlocks = (data.content || []).filter(b => b.type === 'text');
+  if (textBlocks.length > 0) return textBlocks.map(b => b.text || '').join('');
   return data.content?.[0]?.text || '';
 }
 
@@ -3543,6 +3551,15 @@ async function enrichCompanyDeep(c, productText) {
     `${baseUrl}/company/profile`,
     `${baseUrl}/company/outline`,
   ];
+  // 品質モード時の追加クロール: 購買シグナル取得用 (採用・ニュース・事業内容)
+  const signalUrls = (store.opts.qualityMode !== false) ? [
+    `${baseUrl}/news`, `${baseUrl}/news/`,
+    `${baseUrl}/recruit`, `${baseUrl}/recruit/`,
+    `${baseUrl}/career`, `${baseUrl}/careers/`,
+    `${baseUrl}/service`, `${baseUrl}/services`,
+    `${baseUrl}/business`, `${baseUrl}/products`,
+    `${baseUrl}/ir`, `${baseUrl}/press`,
+  ] : [];
 
   let best = { ...c };
   const collectedTexts = [];
@@ -3583,23 +3600,45 @@ async function enrichCompanyDeep(c, productText) {
     phase2.forEach((html, i) => mergeFromHTML(html, secondaryUrls[i]));
   }
 
+  // Phase3: 品質モード時のみ、シグナル取得用ページもクロール
+  if (signalUrls.length > 0) {
+    const phase3 = await Promise.all(signalUrls.map(u => fetchPageViaProxy(u).catch(() => null)));
+    phase3.forEach((html, i) => mergeFromHTML(html, signalUrls[i]));
+  }
+
   best.needs_enrichment = false;
 
-  // AI評価(時間かかるが精度高い) - 会社名と電話番号のT/F判定もここで実施
+  // AI評価(多段階パイプライン) - 会社名・電話・本社所在地のT/F判定 + 深い適合度評価
   if (productText && (store.opts.aiKey || store.opts.braveProxy) && collectedTexts.length > 0) {
-    const hpText = collectedTexts.join('\n').slice(0, 3500);
-    const ai = await aiScoreCompany(best, productText, hpText);
+    // 品質モード時はHPテキストをより多く渡す(6KBまで)
+    const isHigh = store.opts.qualityMode !== false;
+    const hpText = collectedTexts.join('\n').slice(0, isHigh ? 8000 : 3500);
+    const ai = await aiScoreCompany(best, productText, hpText, { qualityMode: isHigh });
     if (ai) {
       best.ai_score = ai.score;
       best.ai_reasoning = ai.reasoning;
       best.ai_fit = ai.fit;
       best.ai_fit_evidence = ai.fit_evidence;
+      best.ai_fit_citations = ai.fit_citations || [];
+      best.ai_buying_signals = ai.buying_signals || [];
+      best.ai_risks = ai.risks || [];
+      best.ai_confidence = ai.ai_confidence || null;
       best.ai_is_company = ai.is_company;
       best.ai_name_valid = ai.name_valid;
       best.ai_phone_valid = ai.phone_valid;
       best.ai_in_target_region = ai.in_target_region;
-      // 会社名: AIが妥当な名前を返した場合のみ採用
-      if (ai.name && ai.name.length >= 3 && ai.name_valid) {
+      best._used_deep_eval = ai._used_deep_eval === true;
+      // 国税庁登記情報
+      if (ai.houjin_bangou) {
+        best.houjin_bangou = ai.houjin_bangou;
+        best.official_name = ai.official_name;
+        best.official_address = ai.official_address;
+      }
+      best.houjin_not_registered = ai.houjin_not_registered === true;
+      // 会社名: AIが妥当な名前を返した場合のみ採用 (公式名があれば優先)
+      if (ai.official_name) {
+        best.name = cleanCompanyName(ai.official_name);
+      } else if (ai.name && ai.name.length >= 3 && ai.name_valid) {
         best.name = cleanCompanyName(ai.name);
       }
       // 本社所在地: AIの判定で上書き(AI は本社/サービス対象を区別できる)
@@ -3843,8 +3882,93 @@ async function batchScoreExisting(productText, onProgress) {
   onProgress?.(`✓ 既存${needScoring.length}社の再評価完了`);
 }
 
-async function aiScoreCompany(company, productText, hpText) {
+// 商材適合度評価のメイン関数。多段階パイプラインで品質を最大化。
+//
+// Stage 1: 安価モデル(Haiku)で予備スクリーニング → 明らかな非適合を早期除外
+// Stage 2: 国税庁法人番号API で実在性 + 公式所在地を確認 (グラウンドトゥルース)
+// Stage 3: Opus + extended thinking で深い適合度評価 + 引用必須
+// Stage 4: 自己整合性チェック (オプション)
+//
+// 高品質モード(qualityMode=true): すべてのstageを実行
+// 通常モード: Stage 1 のみ(従来動作)
+async function aiScoreCompany(company, productText, hpText, options = {}) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
+  const qualityMode = options.qualityMode !== false && store.opts.qualityMode !== false;
+
+  // Stage 1: 高速スクリーニング (Haiku)
+  const stage1 = await aiScoreStage1Quick(company, productText, hpText);
+  if (!stage1) return null;
+
+  // 早期除外: 非法人 or 名前無効 → 後続不要
+  if (stage1.is_company === false || stage1.name_valid === false) {
+    return stage1;
+  }
+
+  // qualityMode が無効なら Stage1 のみで返す(高速モード)
+  if (!qualityMode) return stage1;
+
+  // Stage 2: 国税庁法人番号API で実在性確認
+  let houjin = null;
+  try {
+    houjin = await lookupHoujinBangou(stage1.name || company.name);
+  } catch (e) { console.warn('houjin lookup error', e); }
+
+  // 公式所在地が取れたら、それを真の本社所在地として上書き候補に
+  if (houjin && houjin.found) {
+    stage1.houjin_bangou = houjin.houjin_bangou;
+    stage1.official_name = houjin.official_name;
+    stage1.official_address = houjin.official_address;
+    // AIが返した hq_prefecture と異なる場合は公式を優先
+    if (houjin.official_prefecture) {
+      stage1.hq_prefecture = houjin.official_prefecture;
+      stage1.hq_city = houjin.official_city || stage1.hq_city;
+      // 地域マッチも公式所在地で再判定
+      const prefs = selectedPrefs();
+      const cities = selectedCities();
+      if (prefs.size === 0 && cities.size === 0) {
+        stage1.in_target_region = true;
+      } else {
+        const officialKey = `${houjin.official_prefecture}/${houjin.official_city||''}`;
+        stage1.in_target_region = prefs.has(houjin.official_prefecture) || cities.has(officialKey);
+      }
+    }
+  }
+  // 法人番号で「該当法人なし」(found=false) → 任意団体や個人事業の可能性、スコアに反映
+  if (houjin && houjin.found === false) {
+    stage1.houjin_not_registered = true;
+  }
+
+  // 地域ミスマッチ確定 → Stage3 スキップ(コスト節約)
+  if (stage1.in_target_region === false) {
+    return stage1;
+  }
+
+  // Stage 3: Opus + extended thinking で深い適合度評価 + 引用必須
+  try {
+    const stage3 = await aiScoreStage3Deep(company, productText, hpText, stage1, houjin);
+    if (stage3) {
+      // Stage1の構造的判定 (is_company, phone, name) は維持しつつ、
+      // スコアと根拠は Stage3 の深い分析で上書き
+      return {
+        ...stage1,
+        score: stage3.score,
+        reasoning: stage3.reasoning,
+        fit_evidence: stage3.fit_evidence,
+        fit_citations: stage3.fit_citations,
+        buying_signals: stage3.buying_signals,
+        risks: stage3.risks,
+        ai_confidence: stage3.confidence,
+        _used_deep_eval: true,
+      };
+    }
+  } catch (e) {
+    console.warn('stage3 failed, fallback to stage1', e);
+  }
+  return stage1;
+}
+
+// Stage 1: 高速・安価な構造化判定 (Haiku)
+async function aiScoreStage1Quick(company, productText, hpText) {
   const selectedRegionsHint = (() => {
     const prefs = [...selectedPrefs()];
     const cities = [...selectedCities()];
@@ -3922,7 +4046,115 @@ JSONのみ返答:
       fit: obj.fit || 'mid',
     };
   } catch (e) {
-    console.warn('aiScoreCompany failed', company.name, e);
+    console.warn('aiScoreStage1Quick failed', company.name, e);
+    return null;
+  }
+}
+
+// Stage 3: 深い適合度評価 (Opus + extended thinking + 引用必須)
+// 高品質モードで実行。Stage1 で通過した候補のみ呼ばれる前提。
+// 商材ニーズの根拠を HP テキストから「引用付き」で抽出し、購買シグナルを精査する。
+async function aiScoreStage3Deep(company, productText, hpText, stage1, houjin) {
+  const sys = `あなたは日本のB2B営業における超ベテランのアカウントエグゼクティブです。
+HPテキストを精読し、商材を購入する可能性を「証拠ベース」で厳密に評価します。
+推測や一般論ではなく、HPに書かれている具体的な記述を引用して根拠を示してください。
+extended thinkingで考えた上で、最後に厳密なJSONのみを返答してください。`;
+
+  const officialAddrLine = houjin && houjin.found
+    ? `- 国税庁登記情報: 法人番号${houjin.houjin_bangou} / 正式名「${houjin.official_name}」 / 本店所在地「${houjin.official_address}」`
+    : (houjin && houjin.found === false
+        ? '- 国税庁登記情報: 該当法人なし (任意団体・個人事業の可能性)'
+        : '- 国税庁登記情報: 未確認');
+
+  const prompt = `# 商材
+${productText}
+
+# 評価対象企業
+- 会社名: ${stage1.name || company.name}
+- URL: ${company.source_url || company.website || ''}
+- 業種(暫定): ${company.industry || '不明'}
+${officialAddrLine}
+- 抽出済み代表電話: ${stage1.phone || company.phone || '未取得'}
+- HP説明: ${(company.description || '').slice(0, 300)}
+
+# HPテキスト全文(精読してください)
+${(hpText || '').slice(0, 6000)}
+
+# 評価タスク
+1. HPテキストを精読し、商材を購入する具体的根拠(購買シグナル)を抽出してください
+2. 抽出した根拠は「HPテキストからの引用」を必ず含めてください(意訳・要約は不可)
+3. 引用が見つからなければ「証拠なし」と明記し、スコアは抑えてください
+4. 以下の観点で評価:
+   - business_size: HPから推定される規模(従業員/拠点数/事業規模)
+   - growth_signals: 採用拡大/新規事業/設備投資/M&A等の成長シグナル
+   - product_fit: 商材が対象事業に直接適合するか
+   - existing_solutions: 類似商材・競合製品の既存利用言及
+   - timing_signals: DX/効率化/コスト削減/業務改革への言及
+   - pain_signals: 商材で解決される課題が明示されているか
+5. スコアリング(厳密):
+   - 90-100: 明示的なニーズ表明あり、または類似商材を既に使ってる引用あり → 即決級
+   - 70-89: 明示はないが、強い間接シグナル(成長/拡大/課題言及)複数あり
+   - 50-69: 業種マッチ + 弱いシグナル1-2個
+   - 30-49: 業種は周辺、シグナルなし
+   - 0-29: 適合しない・買う可能性低い
+6. confidence: 評価の確信度(low/medium/high)。HPテキストが薄い場合は low
+7. risks: 営業時のリスク(競合製品ロックイン、業績悪化、買収済み等)。なければ空配列
+
+# 出力 (extended thinking でじっくり考えた上で、最後にJSONのみ)
+{
+  "score": 0-100,
+  "confidence": "low|medium|high",
+  "fit_evidence": "30字以内の要約",
+  "fit_citations": [
+    {"quote": "HPテキストからの直接引用", "why": "なぜ商材適合のシグナルか"}
+  ],
+  "buying_signals": ["成長シグナル", "課題シグナル", ...],
+  "risks": ["リスク1", "リスク2"],
+  "reasoning": "総合評価を50字以内で"
+}`;
+
+  try {
+    // Opus 4.7 + extended thinking (深い推論)
+    // budget_tokens は思考トークン予算。8000 = 適度な深さ
+    const text = await callClaude({
+      system: sys,
+      prompt,
+      max_tokens: 4000,
+      model: 'claude-opus-4-7',
+      thinking: { type: 'enabled', budget_tokens: 8000 },
+      temperature: 1.0, // extended thinking時は1.0が必須
+    });
+    incrementUsage('ai', 3); // Opus + thinking なのでコストは Haiku の~3倍として計上
+    // 最後の JSON ブロックを抽出
+    const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
+    if (matches.length === 0) return null;
+    // 末尾の最大JSONを採用
+    let lastJson = null;
+    for (const m of matches) {
+      try {
+        const obj = JSON.parse(m[0]);
+        if (typeof obj.score === 'number') lastJson = obj;
+      } catch {}
+    }
+    if (!lastJson) {
+      // フォールバック: ```json ブロック内のJSON
+      const blockM = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (blockM) {
+        try { lastJson = JSON.parse(blockM[1]); } catch {}
+      }
+    }
+    if (!lastJson) return null;
+    return {
+      score: Math.max(0, Math.min(100, parseInt(lastJson.score, 10) || 0)),
+      confidence: lastJson.confidence || 'medium',
+      fit_evidence: lastJson.fit_evidence || null,
+      fit_citations: Array.isArray(lastJson.fit_citations) ? lastJson.fit_citations.slice(0, 5) : [],
+      buying_signals: Array.isArray(lastJson.buying_signals) ? lastJson.buying_signals.slice(0, 6) : [],
+      risks: Array.isArray(lastJson.risks) ? lastJson.risks.slice(0, 4) : [],
+      reasoning: String(lastJson.reasoning || '').slice(0, 100),
+    };
+  } catch (e) {
+    console.warn('aiScoreStage3Deep failed', company.name, e);
     return null;
   }
 }
