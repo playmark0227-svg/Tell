@@ -7749,6 +7749,22 @@ async function init() {
     state.continuousSearch = true;
     state.searchAborted = false;
     logAction('search_started', input.slice(0, 80), { regionPrefs: store.opts.regionPrefs, regionCities: store.opts.regionCities });
+    // 検索開始時に、過去の自動発見リストをリセット (毎回その地域で1から探す仕様)
+    // 保存・DNC・CRM・カスタム追加企業 は保持
+    const prevCount = (store.importedCompanies || []).length;
+    if (prevCount > 0) {
+      // 保存済みのものは customCompanies に退避(失わせない)
+      const savedIds = store.saved;
+      const toKeep = store.importedCompanies.filter(c => savedIds.has(c.id));
+      if (toKeep.length > 0) {
+        store.customCompanies = [...(store.customCompanies || []), ...toKeep];
+      }
+      store.importedCompanies = [];
+      state.scored = [];
+      state.discoveryRound = 0;
+      // AI評価キャッシュは保持(同じ会社が再発見された時に再評価せず済む)
+      logAction('search_reset', `前回の${prevCount}社をクリア (保存${toKeep.length}社は退避)`);
+    }
     saveStore();
     const btn = document.getElementById('analyze-btn');
     const origText = btn.textContent;
