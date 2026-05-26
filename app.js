@@ -2671,6 +2671,98 @@ function renderQualitySummary(filteredList) {
   setText('qs-avg', avg);
 }
 
+/* ============ ブラインドスポット分析 ============ */
+// 現在の検索結果が「どこをカバーできていないか」を AI が指摘して
+// 次の探索アクションを提案する。
+//
+// 例:
+//  - 「結果の85%が東京都に集中しているが、関西方面の同業中小企業もポテンシャル高い」
+//  - 「中規模(50-200名)に集中、5-50名の零細にも可能性」
+//  - 「製造業はカバー済だが、関連する物流・卸も検討すべき」
+async function analyzeBlindSpots(productText) {
+  if (!productText || !state.scored || state.scored.length < 5) {
+    return null;
+  }
+  if (!store.opts.aiKey && !store.opts.braveProxy) return null;
+
+  // 結果の統計プロファイル
+  const stats = {
+    total: state.scored.length,
+    by_pref: {},
+    by_city: {},
+    by_industry: {},
+    by_size: {},
+    score_buckets: { '90+': 0, '70-89': 0, '50-69': 0, 'under_50': 0 },
+    avg_score: 0,
+  };
+  let sum = 0;
+  for (const c of state.scored) {
+    stats.by_pref[c.prefecture || '不明'] = (stats.by_pref[c.prefecture || '不明'] || 0) + 1;
+    if (c.city) stats.by_city[`${c.prefecture}/${c.city}`] = (stats.by_city[`${c.prefecture}/${c.city}`] || 0) + 1;
+    stats.by_industry[c.industry || '不明'] = (stats.by_industry[c.industry || '不明'] || 0) + 1;
+    stats.by_size[c.size || '不明'] = (stats.by_size[c.size || '不明'] || 0) + 1;
+    const s = c.score || 0;
+    if (s >= 90) stats.score_buckets['90+']++;
+    else if (s >= 70) stats.score_buckets['70-89']++;
+    else if (s >= 50) stats.score_buckets['50-69']++;
+    else stats.score_buckets.under_50++;
+    sum += s;
+  }
+  stats.avg_score = Math.round(sum / state.scored.length);
+
+  const top = (key, n=5) => Object.entries(stats[key])
+    .sort((a,b) => b[1]-a[1]).slice(0, n)
+    .map(([k,v]) => `${k}:${v}社(${Math.round(100*v/stats.total)}%)`).join('、');
+
+  const prompt = `# 商材
+${productText}
+
+# 想定ICP
+業種: ${(state.icp?.industries||[]).join('、')}
+規模: ${(state.icp?.sizes||[]).join('・')}
+
+# 現在の検索結果統計 (${stats.total}社)
+- 都道府県分布: ${top('by_pref')}
+- 業種分布: ${top('by_industry')}
+- 規模分布: ${top('by_size', 4)}
+- スコア分布: 90+:${stats.score_buckets['90+']}社 / 70-89:${stats.score_buckets['70-89']}社 / 50-69:${stats.score_buckets['50-69']}社 / under50:${stats.score_buckets.under_50}社
+- 平均適合度: ${stats.avg_score}
+
+# タスク
+この検索結果の「カバーされていない可能性が高い領域(ブラインドスポット)」を分析し、
+次回検索でフォーカスすべき方向性を提案してください。
+
+JSONのみで返答:
+{
+  "blind_spots": [
+    {"area": "領域名(例: 関西の同業中小)", "rationale": "なぜブラインドスポットか", "priority": "high|medium|low"}
+  ],
+  "missed_industries": ["想定ICPの周辺で見落とされた業種"],
+  "missed_regions": ["商材ニーズはあるが結果に少ない地域"],
+  "missed_sizes": ["見落とされた規模カテゴリ"],
+  "suggested_queries": ["次回試すと良い検索クエリ4-6本"],
+  "diagnostic_summary": "60字以内の総合診断"
+}`;
+
+  try {
+    const text = await callClaude({
+      system: 'B2B営業のリードジェネレーション戦略アナリスト',
+      prompt,
+      model: 'claude-opus-4-7',
+      max_tokens: 2500,
+      thinking: { type: 'enabled', budget_tokens: 5000 },
+      temperature: 1.0,
+    });
+    incrementUsage('ai', 3);
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    return JSON.parse(m[0]);
+  } catch (e) {
+    console.warn('analyzeBlindSpots failed', e);
+    return null;
+  }
+}
+
 /* ============ 商材プロファイル自動進化 ============ */
 // 検索を重ねるたびに「この商材のターゲット像」を実例から学習・refine する。
 // 商談化・保存・👍 された企業の特徴 vs DNC・👎 された企業の特徴 を AI に渡し、
@@ -6722,6 +6814,61 @@ async function init() {
   });
   const dsBtn = document.getElementById('discover-similar-btn');
   if (dsBtn) dsBtn.addEventListener('click', discoverSimilarToTop);
+  const bsBtn = document.getElementById('blind-spots-btn');
+  if (bsBtn) bsBtn.addEventListener('click', async () => {
+    const productText = document.getElementById('product-input').value.trim();
+    if (!productText) { alert('先に商材を入力してください'); return; }
+    if (!state.scored || state.scored.length < 5) { alert('まず最低5社の検索結果が必要です'); return; }
+    bsBtn.disabled = true; bsBtn.textContent = '🎯 分析中…';
+    try {
+      const result = await analyzeBlindSpots(productText);
+      if (!result) { alert('分析失敗'); return; }
+      // モーダル風に結果を表示
+      const blindHtml = (result.blind_spots || []).map(b =>
+        `<li><strong>[${({high:'高',medium:'中',low:'低'})[b.priority]||'?'}優先度]</strong> ${b.area}<br><small style="color:var(--muted)">→ ${b.rationale}</small></li>`
+      ).join('');
+      const queries = (result.suggested_queries || []).map((q, i) =>
+        `<li><code style="font-size:11px">${q}</code> <button class="ghost small" data-try-q="${q.replace(/"/g,'&quot;')}" style="font-size:10px;padding:2px 6px;margin-left:4px">試す</button></li>`
+      ).join('');
+      const modalHtml = `
+        <div class="modal" id="bs-result-modal" style="display:flex">
+          <div class="modal-content wide" style="max-width:800px">
+            <h3>🎯 ブラインドスポット分析結果</h3>
+            <div style="background:var(--bg);padding:10px;border-radius:6px;font-style:italic;margin-bottom:12px">${result.diagnostic_summary||''}</div>
+            <h4>🔍 ブラインドスポット</h4><ul style="font-size:13px">${blindHtml || '<li>特になし</li>'}</ul>
+            <h4>📦 見落とされた業種</h4><p>${(result.missed_industries||[]).join('、')||'-'}</p>
+            <h4>📍 見落とされた地域</h4><p>${(result.missed_regions||[]).join('、')||'-'}</p>
+            <h4>📏 見落とされた規模</h4><p>${(result.missed_sizes||[]).join('、')||'-'}</p>
+            <h4>💡 次に試すクエリ</h4><ul style="font-size:13px">${queries||'-'}</ul>
+            <div class="modal-actions"><button id="bs-close" class="ghost">閉じる</button></div>
+          </div>
+        </div>`;
+      const div = document.createElement('div');
+      div.innerHTML = modalHtml;
+      document.body.appendChild(div);
+      document.getElementById('bs-close').addEventListener('click', () => div.remove());
+      div.firstElementChild.addEventListener('click', e => { if (e.target === div.firstElementChild) div.remove(); });
+      // 「試す」ボタン
+      div.querySelectorAll('[data-try-q]').forEach(b => {
+        b.addEventListener('click', async () => {
+          const q = b.dataset.tryQ;
+          div.remove();
+          const progEl = document.getElementById('discovery-progress');
+          if (progEl) { progEl.hidden = false; progEl.classList.remove('done','error'); progEl.textContent = `🎯 クエリ「${q}」で追加検索…`; }
+          try {
+            await discoverFromBrave(productText, state.icp, msg => {
+              if (progEl) progEl.textContent = msg;
+            }, { queries: [q], maxQueries: 1 });
+            if (progEl) progEl.classList.add('done');
+          } catch (e) { if (progEl) progEl.textContent = `失敗: ${e.message}`; }
+        });
+      });
+    } catch (e) {
+      alert(`失敗: ${e.message}`);
+    } finally {
+      bsBtn.disabled = false; bsBtn.textContent = '🎯 ブラインドスポット分析';
+    }
+  });
   const epBtn = document.getElementById('evolve-profile-btn');
   if (epBtn) epBtn.addEventListener('click', async () => {
     if (!state.icp) { alert('先に商材を分析してください'); return; }
