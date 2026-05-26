@@ -3654,8 +3654,35 @@ function extractCompanyName(title, url) {
 }
 
 /* ============ HP enrichment via worker /fetch ============ */
+/* ============ HPフェッチキャッシュ (7日 TTL) ============ */
+const HP_CACHE_KEY = 'tell.hp_cache.v1';
+const HP_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7日
+const HP_CACHE_MAX = 500;
+
+function _loadHpCache() {
+  try { return JSON.parse(localStorage.getItem(HP_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+function _saveHpCache(cache) {
+  // LRU: 古いエントリから削除
+  const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t);
+  if (entries.length > HP_CACHE_MAX) {
+    cache = Object.fromEntries(entries.slice(0, HP_CACHE_MAX));
+  }
+  try { localStorage.setItem(HP_CACHE_KEY, JSON.stringify(cache)); } catch (e) {
+    // quota 超過時は半分にして再試行
+    const half = Object.fromEntries(entries.slice(0, Math.floor(HP_CACHE_MAX / 2)));
+    try { localStorage.setItem(HP_CACHE_KEY, JSON.stringify(half)); } catch {}
+  }
+}
+
 async function fetchPageViaProxy(targetUrl) {
   if (!store.opts.braveProxy) return null;
+  // キャッシュチェック
+  const cache = _loadHpCache();
+  const cached = cache[targetUrl];
+  if (cached && (Date.now() - cached.t) < HP_CACHE_TTL) {
+    return cached.html;
+  }
   const proxy = store.opts.braveProxy.replace(/\/+$/, '');
   try {
     const res = await fetch(`${proxy}/fetch?url=${encodeURIComponent(targetUrl)}`, {
@@ -3663,10 +3690,63 @@ async function fetchPageViaProxy(targetUrl) {
     });
     if (!res.ok) return null;
     incrementUsage('fetch', 1);
-    return await res.text();
+    const html = await res.text();
+    // キャッシュ保存
+    cache[targetUrl] = { html: html.slice(0, 200000), t: Date.now() };
+    _saveHpCache(cache);
+    return html;
   } catch (e) {
     return null;
   }
+}
+
+/* ============ AI 評価キャッシュ (30日 TTL) ============ */
+// 同じ会社 × 同じ商材 の組合せが既に評価されていれば再利用
+const AI_CACHE_KEY = 'tell.ai_cache.v1';
+const AI_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const AI_CACHE_MAX = 1000;
+
+function _hash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) + s.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+function _aiCacheKey(company, productText) {
+  const url = company.website || company.source_url || '';
+  const ph = company.houjin_bangou || '';
+  const pt = productText.slice(0, 200);
+  return `${ph}|${url}|${_hash(pt)}`;
+}
+function _loadAiCache() {
+  try { return JSON.parse(localStorage.getItem(AI_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+function _saveAiCache(cache) {
+  const entries = Object.entries(cache).sort((a, b) => b[1].t - a[1].t);
+  if (entries.length > AI_CACHE_MAX) cache = Object.fromEntries(entries.slice(0, AI_CACHE_MAX));
+  try { localStorage.setItem(AI_CACHE_KEY, JSON.stringify(cache)); } catch {
+    const half = Object.fromEntries(entries.slice(0, Math.floor(AI_CACHE_MAX/2)));
+    try { localStorage.setItem(AI_CACHE_KEY, JSON.stringify(half)); } catch {}
+  }
+}
+function getCachedAiEval(company, productText) {
+  const key = _aiCacheKey(company, productText);
+  const cache = _loadAiCache();
+  const cached = cache[key];
+  if (cached && (Date.now() - cached.t) < AI_CACHE_TTL) {
+    return cached.eval;
+  }
+  return null;
+}
+function setCachedAiEval(company, productText, evalResult) {
+  const key = _aiCacheKey(company, productText);
+  const cache = _loadAiCache();
+  cache[key] = { eval: evalResult, t: Date.now() };
+  _saveAiCache(cache);
+}
+
+function clearAllCaches() {
+  localStorage.removeItem(HP_CACHE_KEY);
+  localStorage.removeItem(AI_CACHE_KEY);
 }
 
 /* ============ 国税庁法人番号API: 地域 × 業種キーワードで法人検索 ============ */
@@ -4608,17 +4688,30 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
   const qualityMode = options.qualityMode !== false && store.opts.qualityMode !== false;
 
+  // キャッシュチェック (同じ会社×商材 の再評価を回避)
+  if (!options.bypassCache) {
+    const cached = getCachedAiEval(company, productText);
+    if (cached) {
+      cached._from_cache = true;
+      return cached;
+    }
+  }
+
   // Stage 1: 高速スクリーニング (Haiku)
   const stage1 = await aiScoreStage1Quick(company, productText, hpText);
   if (!stage1) return null;
 
   // 早期除外: 非法人 or 名前無効 → 後続不要
   if (stage1.is_company === false || stage1.name_valid === false) {
+    setCachedAiEval(company, productText, stage1);
     return stage1;
   }
 
   // qualityMode が無効なら Stage1 のみで返す(高速モード)
-  if (!qualityMode) return stage1;
+  if (!qualityMode) {
+    setCachedAiEval(company, productText, stage1);
+    return stage1;
+  }
 
   // Stage 2: 国税庁法人番号API で実在性確認
   let houjin = null;
@@ -4688,7 +4781,7 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
     if (stage3.is_competitor) {
       finalScore = Math.min(finalScore, 10);
     }
-    return {
+    const result = {
       ...stage1,
       score: finalScore,
       reasoning: stage3.reasoning,
@@ -4708,9 +4801,12 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
       _self_consistency_checked: secondConfidence !== null,
       _ensemble: stage3._ensemble || null,
     };
+    setCachedAiEval(company, productText, result);
+    return result;
   } catch (e) {
     console.warn('stage3 failed, fallback to stage1', e);
   }
+  setCachedAiEval(company, productText, stage1);
   return stage1;
 }
 
@@ -5948,6 +6044,14 @@ async function init() {
   if (eul) eul.addEventListener('click', exportUsageLog);
   const viewTos = document.getElementById('view-tos');
   if (viewTos) viewTos.addEventListener('click', () => showTosModal(true));
+  const ccBtn = document.getElementById('clear-cache-btn');
+  if (ccBtn) ccBtn.addEventListener('click', () => {
+    if (!confirm('HP取得 + AI評価のキャッシュを全削除します。\n次回検索時に全企業を再評価するためコストがかかります。続行しますか？')) return;
+    clearAllCaches();
+    logAction('cache_cleared', 'all');
+    saveStore();
+    alert('キャッシュをクリアしました');
+  });
   document.getElementById('export-all').addEventListener('click', exportAll);
   document.getElementById('import-file').addEventListener('change', e => {
     if (e.target.files[0]) importJson(e.target.files[0]);

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515h">
+<link rel="stylesheet" href="style.css?v=20260515i">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515h</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515i</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -422,6 +422,7 @@ service cloud.firestore {
       </div>
       <button class="side-btn" id="export-usage-log" style="font-size:12px">📋 使用ログをCSV出力</button>
       <button class="side-btn ghost" id="view-tos" style="font-size:12px">利用規約を再表示</button>
+      <button class="side-btn ghost" id="clear-cache-btn" style="font-size:12px" title="HP取得・AI評価のキャッシュをクリアして再評価を強制">♻️ キャッシュをクリア</button>
       <label class="kv" title="Brave検索の取得ページ数。多いほど中小企業にもリーチしやすいが時間がかかる。"><span>🔍 検索取得ページ数</span>
         <select id="opt-brave-pages" style="width:80px">
           <option value="1">1ページ</option>
@@ -869,9 +870,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515h"></script>
-<script type="module" src="firebase-sync.js?v=20260515h"></script>
-<script src="data/regions.js?v=20260515h"></script>
-<script src="app.js?v=20260515h"></script>
+<script src="firebase-config.js?v=20260515i"></script>
+<script type="module" src="firebase-sync.js?v=20260515i"></script>
+<script src="data/regions.js?v=20260515i"></script>
+<script src="app.js?v=20260515i"></script>
 </body>
 </html>
