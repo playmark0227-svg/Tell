@@ -3138,25 +3138,69 @@ function generateQueriesFromICP(productText, icp, round = 0) {
 
 async function aiGenerateQueries(productText, icp) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return generateQueriesFromICP(productText, icp);
+  const qualityMode = store.opts.qualityMode !== false;
+  const prefs = [...selectedPrefs()];
+  const cities = [...selectedCities()];
+  const regionHint = cities.length > 0
+    ? `ユーザー選択地域(必ず全てに対応するクエリを生成): ${cities.slice(0,12).join('・')}`
+    : (prefs.length > 0 ? `ユーザー選択地域: ${prefs.slice(0,12).join('・')}` : '地域指定なし');
   try {
-    const prompt = `以下の商材を購入しそうな日本企業をWeb検索で見つけるためのクエリを6個、JSON配列のみで返してください。
+    // 高品質モード: Opus + extended thinking で深く考えてから生成
+    const sys = `あなたはB2B営業のリードジェネレーション専門家です。商材内容と購買決定の論理を理解し、対象企業の業種・規模・課題像から「実際にHPに書いてありそうなフレーズ」を逆算してWeb検索クエリを生成します。SEO上位の比較記事やランキングサイトではなく、中小〜中堅企業の公式HPがヒットするクエリを作るのが目的です。`;
 
-商材: ${productText}
-ターゲット業種: ${(icp.industries||[]).join('、')}
+    const prompt = `# 商材
+${productText}
 
-要件:
-- 大手SEOブログや比較サイトではなく「中小〜中堅の法人HP」がヒットするように
-- 業種＋地域＋規模ワード(従業員数/工場/事業所)＋公式HP用語(会社概要/代表電話/沿革)を組合せ
-- 大手だけ並ぶような汎用ワードは避ける
-- 半分は地域名(関東/中部/関西等)や具体地名を入れる
-- 6個のクエリは互いに異なる切り口で
+# ターゲット像
+業種候補: ${(icp.industries||[]).join('、')}
+規模: ${(icp.sizes||[]).join('・')}
+想定課題: ${(icp.pains||[]).slice(0,5).join('・')}
 
-例: ["金属加工 中小 関東 工場一覧","印刷 従業員30名 大阪 会社概要","樹脂成形 創業 中部 代表電話","食品加工 兵庫 事業所 沿革"]`;
-    const text = await callClaude({ system: 'B2B営業クエリ生成専門家。中堅・中小企業を見つけるためのSEO上位回避型クエリを作る。', prompt, max_tokens: 700 });
-    const m = text.match(/\[[\s\S]*\]/);
-    if (!m) return generateQueriesFromICP(productText, icp);
-    const arr = JSON.parse(m[0]);
-    return arr.filter(q => typeof q === 'string').slice(0, 6);
+# ${regionHint}
+
+# タスク
+この商材を購入する可能性がある日本企業を Brave Search で発見するためのクエリを生成してください。
+
+## 設計原則
+1. **その地域に本当に所在する会社のHPがヒットするように地域名を必ず含める**
+   (地域選択がある場合、選択地域ごとにクエリを作る)
+2. **公式HPに書かれている自然な表現を組み合わせる**
+   - 会社概要・沿革・代表電話・本社所在地・アクセス・事業所一覧 (会社情報系)
+   - 採用情報・新卒採用・キャリア (採用系: 中堅以上が出やすい)
+   - 取引先・実績・事例・導入企業 (B2B系)
+   - 工場・営業所・支社・事業所 (拠点を持つ会社)
+3. **比較記事/ランキング/まとめサイトを避けるための工夫**
+   - "とは" "選び方" "おすすめ" "5選" 等の単語を含めない
+   - "公式" "official" 等を含めると公式HPに寄る
+4. **業種多様化**: 商材から見て「主力ターゲット業種」と「周辺業種」を混ぜる
+5. **規模多様化**: 中小狙いと中堅狙いの両方
+6. **検索演算子の活用**: site:除外 (-site:rikunabi.com など) や intitle: を使うと精度UP
+
+## 出力
+${qualityMode ? '15〜20個' : '6〜10個'}の互いに異なる切り口のクエリを生成。
+クエリの後に1行コメントで意図を添える。最後にJSON配列のみで返してください。
+
+(extended thinkingで設計してから、最後にJSONのみ)
+["クエリ1", "クエリ2", ...]`;
+
+    const callOpts = qualityMode
+      ? { model: 'claude-opus-4-7', max_tokens: 4000, thinking: { type: 'enabled', budget_tokens: 5000 }, temperature: 1.0 }
+      : { max_tokens: 800 };
+
+    const text = await callClaude({ system: sys, prompt, ...callOpts });
+    incrementUsage('ai', qualityMode ? 3 : 1);
+    // 末尾のJSON配列を抽出
+    const matches = [...text.matchAll(/\[\s*"[\s\S]*?\]/g)];
+    let arr = null;
+    for (const m of matches) {
+      try {
+        const parsed = JSON.parse(m[0]);
+        if (Array.isArray(parsed) && parsed.length > 0) arr = parsed;
+      } catch {}
+    }
+    if (!arr) return generateQueriesFromICP(productText, icp);
+    const cleaned = arr.filter(q => typeof q === 'string' && q.length > 3);
+    return qualityMode ? cleaned.slice(0, 20) : cleaned.slice(0, 10);
   } catch (e) {
     console.warn('aiGenerateQueries failed', e);
     return generateQueriesFromICP(productText, icp);
@@ -3402,7 +3446,9 @@ function extractCityFromAddress(prefecture, addressTail) {
 async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   if (!store.opts.braveKey && !store.opts.braveProxy) throw new Error('Brave のプロキシURLまたはAPIキーを設定してください');
   const round = options.round || 0;
-  const maxQueries = options.maxQueries || 10;
+  // 品質モード時はクエリ多めに(20本)
+  const isHighQuality = store.opts.qualityMode !== false;
+  const maxQueries = options.maxQueries || (isHighQuality ? 20 : 10);
   let queries;
   if (options.queries && options.queries.length) {
     queries = options.queries;
@@ -3981,21 +4027,39 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
   // Stage 3: Opus + extended thinking で深い適合度評価 + 引用必須
   try {
     const stage3 = await aiScoreStage3Deep(company, productText, hpText, stage1, houjin);
-    if (stage3) {
-      // Stage1の構造的判定 (is_company, phone, name) は維持しつつ、
-      // スコアと根拠は Stage3 の深い分析で上書き
-      return {
-        ...stage1,
-        score: stage3.score,
-        reasoning: stage3.reasoning,
-        fit_evidence: stage3.fit_evidence,
-        fit_citations: stage3.fit_citations,
-        buying_signals: stage3.buying_signals,
-        risks: stage3.risks,
-        ai_confidence: stage3.confidence,
-        _used_deep_eval: true,
-      };
+    if (!stage3) return stage1;
+
+    // Stage 4: 自己整合性チェック - 境界域(45-75)のスコアはノイズが大きいので2回目を走らせて median を取る
+    let finalScore = stage3.score;
+    let secondConfidence = null;
+    if (options.selfConsistency !== false && stage3.score >= 45 && stage3.score <= 75) {
+      try {
+        const stage3b = await aiScoreStage3Deep(company, productText, hpText, stage1, houjin);
+        if (stage3b) {
+          // median (2点なら平均)
+          finalScore = Math.round((stage3.score + stage3b.score) / 2);
+          // confidence は両方一致なら強化、不一致なら下げる
+          if (Math.abs(stage3.score - stage3b.score) > 15) {
+            secondConfidence = 'low'; // 判断ブレが大きい
+          } else if (stage3.confidence === stage3b.confidence) {
+            secondConfidence = stage3.confidence;
+          }
+        }
+      } catch (e) { /* 2回目失敗は無視 */ }
     }
+
+    return {
+      ...stage1,
+      score: finalScore,
+      reasoning: stage3.reasoning,
+      fit_evidence: stage3.fit_evidence,
+      fit_citations: stage3.fit_citations,
+      buying_signals: stage3.buying_signals,
+      risks: stage3.risks,
+      ai_confidence: secondConfidence || stage3.confidence,
+      _used_deep_eval: true,
+      _self_consistency_checked: secondConfidence !== null,
+    };
   } catch (e) {
     console.warn('stage3 failed, fallback to stage1', e);
   }
@@ -4132,6 +4196,17 @@ ${(hpText || '').slice(0, 6000)}
    - 50-69: 業種マッチ + 弱いシグナル1-2個
    - 30-49: 業種は周辺、シグナルなし
    - 0-29: 適合しない・買う可能性低い
+
+   ## スコア参考例 (キャリブレーション用)
+
+   例A) 商材「クラウド勤怠管理」 → 製造業100名規模・HPに「業務効率化を推進」「DX人材募集」と明記
+   → score:88 / fit_evidence:「DX推進中の中堅製造」/ citation:「業務効率化を推進」
+
+   例B) 商材「Web制作」 → 老舗工務店・HPは古いがリニューアル予定の記載なし、ITとは無縁
+   → score:25 / fit_evidence:null / reasoning:「業種ミスマッチで決め手なし」
+
+   例C) 商材「英会話研修」 → 商社・HPに「海外展開強化」「英語ができる人材積極採用」
+   → score:75 / fit_evidence:「海外展開強化中」/ citation:「英語ができる人材積極採用」
 6. confidence: 評価の確信度(low/medium/high)。HPテキストが薄い場合は low
 7. risks: 営業時のリスク(競合製品ロックイン、業績悪化、買収済み等)。なければ空配列
 
