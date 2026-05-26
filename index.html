@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515m">
+<link rel="stylesheet" href="style.css?v=20260515n">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515m</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515n</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -630,6 +630,13 @@ service cloud.firestore {
         <button id="export-saved-inline" class="ghost small">⭐ 保存リストをCSV出力</button>
       </div>
     </div>
+    <div id="bulk-actions" style="display:none;background:var(--accent);color:#fff;padding:8px 12px;border-radius:6px;margin:8px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <span id="bulk-count" style="font-weight:600">0社選択</span>
+      <button id="bulk-save" style="background:#fff;color:var(--accent)">⭐ 一括保存</button>
+      <button id="bulk-dnc" style="background:#fff;color:var(--accent)">🚫 一括DNC</button>
+      <button id="bulk-export" style="background:#fff;color:var(--accent)">📥 選択をCSV出力</button>
+      <button id="bulk-clear" class="ghost" style="margin-left:auto">クリア</button>
+    </div>
     <div id="quality-summary" class="quality-summary" style="display:none">
       <div class="qs-stat"><div class="qs-num" id="qs-total">0</div><div class="qs-lbl">総数</div></div>
       <div class="qs-stat"><div class="qs-num good" id="qs-high">0</div><div class="qs-lbl">高適合(80+)</div></div>
@@ -786,6 +793,27 @@ service cloud.firestore {
   </div>
 </div>
 
+<div id="roleplay-modal" class="modal" hidden>
+  <div class="modal-content wide" style="max-width:800px;max-height:92vh;display:flex;flex-direction:column">
+    <h3>🎭 架電ロールプレイ練習</h3>
+    <div id="rp-meta" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+    <div id="rp-chat" style="flex:1;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:12px;background:var(--bg);min-height:300px;max-height:50vh;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input type="text" id="rp-input" placeholder="ここにあなたのトークを入力(エンター送信)" style="flex:1" autocomplete="off">
+      <button id="rp-send">送信</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px;margin-bottom:8px">
+      <button class="ghost small" data-rp-role="gatekeeper">受付役で開始</button>
+      <button class="ghost small" data-rp-role="decision_maker">決裁者役で開始</button>
+      <button class="ghost small" id="rp-feedback">📝 評価フィードバック取得</button>
+      <button class="ghost small" id="rp-reset">🔄 リセット</button>
+    </div>
+    <div class="modal-actions">
+      <button id="rp-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div id="compare-modal" class="modal" hidden>
   <div class="modal-content wide" style="max-width:1200px;max-height:92vh;overflow:auto">
     <h3>📊 企業を横並びで比較</h3>
@@ -899,9 +927,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515m"></script>
-<script type="module" src="firebase-sync.js?v=20260515m"></script>
-<script src="data/regions.js?v=20260515m"></script>
-<script src="app.js?v=20260515m"></script>
+<script src="firebase-config.js?v=20260515n"></script>
+<script type="module" src="firebase-sync.js?v=20260515n"></script>
+<script src="data/regions.js?v=20260515n"></script>
+<script src="app.js?v=20260515n"></script>
 </body>
 </html>

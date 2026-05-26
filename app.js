@@ -2809,6 +2809,186 @@ function buildFewShotFromFeedback(productText, limit = 3) {
   return lines.join('\n') + '\n';
 }
 
+/* ============ 通話シミュレーター(AIロールプレイ) ============ */
+let _rpState = { company: null, role: null, messages: [] };
+
+function openRoleplayModal(company) {
+  _rpState = { company, role: null, messages: [] };
+  document.getElementById('rp-meta').textContent = `練習相手: ${company.name} (${company.industry||'?'}・${company.prefecture||''}${company.city||''})`;
+  document.getElementById('rp-chat').innerHTML = '<p class="muted" style="text-align:center;padding:20px">「受付役」か「決裁者役」で開始してください</p>';
+  document.getElementById('rp-input').value = '';
+  document.getElementById('roleplay-modal').hidden = false;
+}
+
+function rpAppendMessage(role, text) {
+  const chat = document.getElementById('rp-chat');
+  const isAi = role === 'ai';
+  const div = document.createElement('div');
+  div.style.cssText = `margin-bottom:10px;display:flex;${isAi?'justify-content:flex-start':'justify-content:flex-end'}`;
+  div.innerHTML = `<div style="max-width:80%;padding:8px 12px;border-radius:12px;${isAi?'background:#fff;border:1px solid var(--border)':'background:var(--accent);color:#fff'}"><div style="font-size:10px;opacity:0.7;margin-bottom:2px">${isAi?(_rpState.role==='gatekeeper'?'🛡 受付':'👔 決裁者'):'📞 あなた'}</div><div style="font-size:13px;white-space:pre-wrap">${text}</div></div>`;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function rpStartRole(role) {
+  if (!_rpState.company) return;
+  _rpState.role = role;
+  _rpState.messages = [];
+  document.getElementById('rp-chat').innerHTML = '';
+  const productText = document.getElementById('product-input')?.value || '';
+  const sys = `あなたは ${_rpState.company.name} (${_rpState.company.industry||'業界不明'}, ${_rpState.company.prefecture||''}${_rpState.company.city||''}, 従業員${_rpState.company.employees||'?'}名) の${role==='gatekeeper'?'電話受付担当':'部署責任者'}を演じてください。
+
+ユーザーは「${productText}」という商材を販売する営業担当者として架電してきます。
+${role==='gatekeeper'
+  ? 'あなたは受付として、目的が不明確/関係性希薄な営業電話には冷ややかに対応し、目的が明確で価値が伝われば取次ぐかどうか判断します。代表的な受付の反応(「ご用件は?」「お約束は?」「資料お送りいただけますか」等)を自然に演じてください。'
+  : 'あなたは決裁者として、忙しい中で電話を受けています。最初の30秒で価値が伝わらなければ切ろうとし、興味があれば質問を返します。本当に良い提案であれば次のアクションに進む判断もします。'}
+
+応答は自然な日本語で、1-2文程度に短く。営業練習のための練習相手として、本物の架電体験に近い反応を返してください。`;
+  // 初手: 電話が繋がった想定で受付/決裁者が出る
+  const greeting = role === 'gatekeeper' ? `はい、${_rpState.company.name}でございます。` : `はい、${_rpState.company.name}の${_rpState.company.ai_decision_makers?.[0]?.title || '担当者'}です。`;
+  rpAppendMessage('ai', greeting);
+  _rpState.messages.push({ role: 'assistant', content: greeting });
+}
+
+async function rpSendMessage() {
+  const input = document.getElementById('rp-input');
+  const userText = input.value.trim();
+  if (!userText || !_rpState.role) return;
+  rpAppendMessage('user', userText);
+  _rpState.messages.push({ role: 'user', content: userText });
+  input.value = '';
+  input.disabled = true;
+  try {
+    const productText = document.getElementById('product-input')?.value || '';
+    const sys = `あなたは ${_rpState.company.name} の${_rpState.role==='gatekeeper'?'受付担当':'決裁者'}を演じています。ユーザー営業電話に対する自然な反応を1-2文で返してください。`;
+    const text = await callClaude({
+      system: sys,
+      messages: _rpState.messages,
+      max_tokens: 200,
+    });
+    incrementUsage('ai', 1);
+    rpAppendMessage('ai', text);
+    _rpState.messages.push({ role: 'assistant', content: text });
+  } catch (e) {
+    rpAppendMessage('ai', `[エラー: ${e.message}]`);
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+async function rpGetFeedback() {
+  if (_rpState.messages.length < 4) { alert('もう少しロールプレイしてから評価をリクエストしてください'); return; }
+  const productText = document.getElementById('product-input')?.value || '';
+  const transcript = _rpState.messages.map(m => `${m.role==='user'?'営業':'相手'}: ${m.content}`).join('\n');
+  const sys = `あなたはB2B営業のシニアトレーニング担当者です。営業ロールプレイの transcript を見て、改善点を構造的にフィードバックしてください。`;
+  const prompt = `# 商材
+${productText}
+
+# ロールプレイ transcript
+${transcript}
+
+# タスク
+営業側の発言について以下の観点で評価:
+1. 開口一発の印象(掴みは強かったか)
+2. 価値提示の明確さ
+3. ヒアリングの質
+4. クロージング/次のアクション提示
+5. 全体的な改善点 (3つまで)
+
+実用的なアドバイスを具体的に。長文OK。`;
+  const fbMsg = document.createElement('div');
+  fbMsg.style.cssText = 'margin:12px 0;padding:12px;background:rgba(0,150,80,.05);border-left:3px solid var(--good);border-radius:6px;font-size:13px';
+  fbMsg.innerHTML = '<strong>📝 トレーナー フィードバック (生成中…)</strong>';
+  document.getElementById('rp-chat').appendChild(fbMsg);
+  try {
+    const text = await callClaude({ system: sys, prompt, max_tokens: 1500 });
+    incrementUsage('ai', 1);
+    fbMsg.innerHTML = `<strong>📝 トレーナー フィードバック</strong><pre style="white-space:pre-wrap;margin-top:8px;font-family:inherit">${text.replace(/</g,'&lt;')}</pre>`;
+  } catch (e) {
+    fbMsg.innerHTML = `<strong>📝 評価失敗</strong>: ${e.message}`;
+  }
+}
+
+function setupRoleplayModal() {
+  const modal = document.getElementById('roleplay-modal');
+  if (!modal) return;
+  document.getElementById('rp-close').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+  document.querySelectorAll('[data-rp-role]').forEach(b =>
+    b.addEventListener('click', () => rpStartRole(b.dataset.rpRole))
+  );
+  document.getElementById('rp-send').addEventListener('click', rpSendMessage);
+  document.getElementById('rp-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); rpSendMessage(); }
+  });
+  document.getElementById('rp-feedback').addEventListener('click', rpGetFeedback);
+  document.getElementById('rp-reset').addEventListener('click', () => {
+    if (_rpState.company) openRoleplayModal(_rpState.company);
+  });
+}
+
+/* ============ 一括アクション ============ */
+function setupBulkActions() {
+  const bar = document.getElementById('bulk-actions');
+  if (!bar) return;
+  // チェック変更時に表示更新
+  document.body.addEventListener('change', e => {
+    if (!e.target.classList?.contains('cmp-check')) return;
+    updateBulkBar();
+  });
+  document.getElementById('bulk-save').addEventListener('click', () => {
+    const ids = bulkSelectedIds();
+    ids.forEach(id => store.saved.add(id));
+    logAction('bulk_save', `${ids.length}社`);
+    saveStore(); renderResults(); renderSidebar();
+  });
+  document.getElementById('bulk-dnc').addEventListener('click', () => {
+    const ids = bulkSelectedIds();
+    if (!confirm(`${ids.length}社を一括DNCしますか?(電話番号も今後の収集対象から除外されます)`)) return;
+    ids.forEach(id => {
+      store.dnc.add(id);
+      const c = findCompanyById(id);
+      if (c?.phone) {
+        if (!store.dncPhones) store.dncPhones = new Set();
+        store.dncPhones.add(normalizePhoneKey(c.phone));
+      }
+    });
+    logAction('bulk_dnc', `${ids.length}社`);
+    saveStore(); renderResults(); renderSidebar();
+  });
+  document.getElementById('bulk-export').addEventListener('click', () => {
+    const ids = bulkSelectedIds();
+    const rows = ids.map(id => findCompanyById(id)).filter(Boolean);
+    if (rows.length === 0) return;
+    logAction('csv_export_bulk', `${rows.length}社`);
+    saveStore();
+    downloadFile(`tell-selected-${Date.now()}.csv`, toCsv(rows));
+  });
+  document.getElementById('bulk-clear').addEventListener('click', () => {
+    document.querySelectorAll('.cmp-check').forEach(cb => cb.checked = false);
+    const allCb = document.getElementById('cmp-check-all');
+    if (allCb) allCb.checked = false;
+    updateBulkBar();
+  });
+}
+
+function bulkSelectedIds() {
+  return [...document.querySelectorAll('.cmp-check:checked')].map(cb => parseInt(cb.dataset.cmpId, 10));
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-actions');
+  const count = document.querySelectorAll('.cmp-check:checked').length;
+  if (!bar) return;
+  if (count === 0) {
+    bar.style.display = 'none';
+  } else {
+    bar.style.display = 'flex';
+    document.getElementById('bulk-count').textContent = `${count}社選択`;
+  }
+}
+
 /* ============ 横並び比較モーダル ============ */
 function openCompareModal() {
   const checked = [...document.querySelectorAll('.cmp-check:checked')]
@@ -3102,6 +3282,7 @@ function openScoreDetailModal(companyId) {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button id="sd-gen-email" class="ghost small">📧 メール文案を生成</button>
         <button id="sd-gen-script" class="ghost small">📜 架電スクリプトを生成</button>
+        <button id="sd-roleplay" class="ghost small">🎭 練習通話 (AIロールプレイ)</button>
       </div>
       <div id="sd-generated" style="margin-top:12px"></div>
     `);
@@ -3124,6 +3305,11 @@ function openScoreDetailModal(companyId) {
     } finally {
       genEmailBtn.disabled = false; genEmailBtn.textContent = '📧 メール文案を生成';
     }
+  });
+  const rpBtn = document.getElementById('sd-roleplay');
+  if (rpBtn) rpBtn.addEventListener('click', () => {
+    document.getElementById('score-detail-modal').hidden = true;
+    openRoleplayModal(c);
   });
   const genScriptBtn = document.getElementById('sd-gen-script');
   if (genScriptBtn) genScriptBtn.addEventListener('click', async () => {
@@ -6296,6 +6482,8 @@ async function init() {
   setupScoreDetailModal();
   setupCompareModal();
   setupSnapshotsModal();
+  setupRoleplayModal();
+  setupBulkActions();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {
