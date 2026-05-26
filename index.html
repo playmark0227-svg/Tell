@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515r">
+<link rel="stylesheet" href="style.css?v=20260515s">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515r</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515s</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -446,6 +446,25 @@ service cloud.firestore {
 <button class="sidebar-toggle" id="sidebar-toggle" aria-label="メニュー">☰</button>
 
 <main class="main-content">
+
+<nav class="top-nav">
+  <div class="top-nav-brand">
+    <span class="brand-mark">📞</span>
+    <span class="brand-name">tell partner</span>
+    <span class="brand-tag" id="brand-mode">Sales Platform</span>
+  </div>
+  <div class="top-nav-tabs">
+    <button class="top-tab active" data-tab="discover">🔍 発見・評価</button>
+    <button class="top-tab" data-tab="crm">📒 顧客管理</button>
+    <button class="top-tab" data-tab="dashboard">📊 ダッシュボード</button>
+    <button class="top-tab" data-tab="settings">⚙ 設定</button>
+  </div>
+  <div class="top-nav-right">
+    <span class="top-nav-user" id="top-nav-user"></span>
+  </div>
+</nav>
+
+<div class="tab-panel active" id="tab-discover">
 
 <header>
   <div class="container">
@@ -701,6 +720,177 @@ service cloud.firestore {
 
 </div>
 
+</div> <!-- /tab-discover -->
+
+<!-- ========== CRM (顧客管理) タブ ========== -->
+<div class="tab-panel" id="tab-crm" hidden>
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <h1>📒 顧客管理</h1>
+        <p class="muted">商談化した顧客のパイプライン管理。架電・打合せ・提案の履歴と次回アクションを追跡します。</p>
+      </div>
+      <div class="page-actions">
+        <button id="crm-add-btn" class="primary">＋ 新規顧客追加</button>
+        <button id="crm-import-prospect-btn" class="ghost">📋 発見リストから取込</button>
+        <button id="crm-export-btn" class="ghost">📥 CSV出力</button>
+      </div>
+    </div>
+
+    <!-- KPI cards -->
+    <div class="crm-kpis" id="crm-kpis"></div>
+
+    <!-- パイプライン (kanban) -->
+    <div class="crm-pipeline-wrap">
+      <div class="crm-pipeline" id="crm-pipeline"></div>
+    </div>
+
+    <!-- フォローアップ予定 -->
+    <div class="crm-followups">
+      <h2>📅 今後のフォローアップ</h2>
+      <div id="crm-followup-list" class="empty-state">フォローアップ予定なし</div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== ダッシュボード タブ ========== -->
+<div class="tab-panel" id="tab-dashboard" hidden>
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <h1>📊 ダッシュボード</h1>
+        <p class="muted">営業活動の数値で現状を可視化。</p>
+      </div>
+      <div class="page-actions">
+        <select id="dash-period" class="select">
+          <option value="month">今月</option>
+          <option value="week">今週</option>
+          <option value="all">通算</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- メインKPI -->
+    <div class="kpi-grid" id="kpi-grid"></div>
+
+    <!-- ファネル + パイプラインバリュー -->
+    <div class="dashboard-row">
+      <div class="card">
+        <h3>🔻 営業ファネル</h3>
+        <div id="dash-funnel"></div>
+      </div>
+      <div class="card">
+        <h3>💰 パイプラインバリュー</h3>
+        <div id="dash-pipeline-value"></div>
+      </div>
+    </div>
+
+    <!-- 業種/地域/時系列分布 -->
+    <div class="dashboard-row">
+      <div class="card">
+        <h3>🏭 業種別分布</h3>
+        <div id="dash-by-industry"></div>
+      </div>
+      <div class="card">
+        <h3>📍 地域別分布</h3>
+        <div id="dash-by-region"></div>
+      </div>
+    </div>
+
+    <!-- 最近のアクティビティ -->
+    <div class="card">
+      <h3>🕒 最近のアクティビティ</h3>
+      <div id="dash-activity"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 設定 タブ ========== -->
+<div class="tab-panel" id="tab-settings" hidden>
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <h1>⚙ 設定</h1>
+        <p class="muted">アカウント・接続・表示・コンプライアンス すべての設定をここから操作できます。</p>
+      </div>
+    </div>
+
+    <!-- 設定セクション群 -->
+    <div class="settings-sections">
+
+      <div class="card">
+        <h3>👤 アカウント</h3>
+        <div id="settings-account"></div>
+      </div>
+
+      <div class="card" id="settings-master-card">
+        <h3>🔧 マスター管理 (管理者のみ)</h3>
+        <p class="muted">APIキー・接続設定・課金単価・ユーザー管理</p>
+        <button id="settings-open-master" class="primary">マスター管理画面を開く</button>
+      </div>
+
+      <div class="card">
+        <h3>💴 今月の利用料金</h3>
+        <div id="settings-billing"></div>
+      </div>
+
+      <div class="card">
+        <h3>🔍 検索品質設定</h3>
+        <div class="settings-grid">
+          <label class="kv"><span>🧠 高品質モード(Deep Eval)<br><small class="muted">Opus + 拡張思考 + 国税庁API + 引用必須</small></span>
+            <input type="checkbox" id="settings-quality-mode">
+          </label>
+          <label class="kv"><span>🎯 マルチモデルアンサンブル<br><small class="muted">Opus + Sonnet 合議で更に厳密 (コスト2倍)</small></span>
+            <input type="checkbox" id="settings-ensemble-mode">
+          </label>
+          <label class="kv"><span>🔍 検索取得ページ数</span>
+            <select id="settings-brave-pages" class="select" style="width:120px">
+              <option value="1">1ページ</option>
+              <option value="2">2ページ</option>
+              <option value="3">3ページ</option>
+              <option value="4">4ページ</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>📋 表示・フィルタ</h3>
+        <div class="settings-grid">
+          <label class="kv"><span>DNCを結果から除外</span>
+            <input type="checkbox" id="settings-exclude-dnc">
+          </label>
+          <label class="kv"><span>保存のみ表示</span>
+            <input type="checkbox" id="settings-saved-only">
+          </label>
+          <label class="kv"><span>🌙 ダークモード</span>
+            <input type="checkbox" id="settings-dark">
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🛡 コンプライアンス</h3>
+        <div class="settings-grid">
+          <div class="info-box">
+            <strong>📞 法人代表番号のみ収集</strong><br>
+            <small>個人携帯(070/080/090)は仕様上収集しません。コンプライアンス保証のため変更不可。</small>
+          </div>
+          <button id="settings-view-tos" class="ghost">利用規約を表示</button>
+          <button id="settings-export-log" class="ghost">📋 使用ログをCSV出力</button>
+          <button id="settings-clear-cache" class="ghost">♻️ キャッシュをクリア</button>
+        </div>
+      </div>
+
+      <div class="card danger-zone">
+        <h3>⚠ 危険ゾーン</h3>
+        <p class="muted">これらの操作は元に戻せません。</p>
+        <button id="settings-reset-all" class="danger">全データをリセット</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer>
   <div class="container">
     <p>tell partner — B2B営業リスト適合度スコアリングツール</p>
@@ -791,6 +981,121 @@ service cloud.firestore {
     <div class="modal-actions">
       <button id="script-copy">コピー</button>
       <button id="script-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div id="crm-customer-modal" class="modal" hidden>
+  <div class="modal-content wide" style="max-width:900px;max-height:92vh;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">
+      <div>
+        <h3 id="cm-name" style="margin:0">顧客名</h3>
+        <div id="cm-meta" class="muted" style="font-size:12px;margin-top:4px"></div>
+      </div>
+      <button id="cm-delete" class="ghost small" style="color:var(--danger)">削除</button>
+    </div>
+
+    <div class="crm-modal-body" style="flex:1;overflow:auto;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <!-- 左: 基本情報 + ステージ -->
+      <div class="crm-modal-col">
+        <div class="card">
+          <h4>📌 ステージ</h4>
+          <select id="cm-stage" class="select" style="width:100%;font-size:14px">
+            <option value="approach">アプローチ予定</option>
+            <option value="first_call">初回架電</option>
+            <option value="meeting">商談中</option>
+            <option value="proposal">提案中</option>
+            <option value="won">受注 ✓</option>
+            <option value="lost">失注 ✗</option>
+          </select>
+        </div>
+
+        <div class="card">
+          <h4>📞 基本情報</h4>
+          <div class="settings-grid">
+            <label class="kv col"><span>会社名</span><input type="text" id="cm-name-input" class="input"></label>
+            <label class="kv col"><span>電話番号</span><input type="text" id="cm-phone" class="input"></label>
+            <label class="kv col"><span>業種</span><input type="text" id="cm-industry" class="input"></label>
+            <label class="kv col"><span>所在地</span><input type="text" id="cm-address" class="input"></label>
+            <label class="kv col"><span>HP</span><input type="text" id="cm-website" class="input"></label>
+            <label class="kv col"><span>担当者名</span><input type="text" id="cm-contact-person" class="input" placeholder="例: 山田太郎"></label>
+            <label class="kv col"><span>担当者役職</span><input type="text" id="cm-contact-title" class="input" placeholder="例: 営業部長"></label>
+            <label class="kv col"><span>担当者メール</span><input type="email" id="cm-contact-email" class="input"></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h4>💰 商談情報</h4>
+          <div class="settings-grid">
+            <label class="kv col"><span>想定取引額(円)</span><input type="number" id="cm-deal-value" class="input" min="0" step="10000"></label>
+            <label class="kv col"><span>受注確度(%)</span><input type="number" id="cm-deal-prob" class="input" min="0" max="100" step="10"></label>
+            <label class="kv col"><span>クロージング予定日</span><input type="date" id="cm-close-date" class="input"></label>
+            <label class="kv col"><span>担当営業</span><input type="text" id="cm-assigned" class="input"></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右: アクション + メモ + 履歴 -->
+      <div class="crm-modal-col">
+        <div class="card">
+          <h4>📅 次回アクション</h4>
+          <div class="settings-grid">
+            <label class="kv col"><span>アクション</span>
+              <select id="cm-next-action" class="select">
+                <option value="">なし</option>
+                <option value="call">📞 架電</option>
+                <option value="email">📧 メール送信</option>
+                <option value="meeting">🤝 打合せ</option>
+                <option value="proposal">📄 提案書送付</option>
+                <option value="followup">🔁 フォローアップ</option>
+              </select>
+            </label>
+            <label class="kv col"><span>予定日時</span><input type="datetime-local" id="cm-next-action-at" class="input"></label>
+            <label class="kv col"><span>備考</span><input type="text" id="cm-next-action-note" class="input"></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h4>📝 メモ</h4>
+          <textarea id="cm-memo" class="input" style="min-height:80px;width:100%" placeholder="顧客との会話内容・気づきなど"></textarea>
+        </div>
+
+        <div class="card">
+          <h4>🕒 アクティビティ履歴</h4>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <select id="cm-add-activity-type" class="select" style="font-size:12px">
+              <option value="call">📞 架電</option>
+              <option value="email">📧 メール</option>
+              <option value="meeting">🤝 打合せ</option>
+              <option value="note">📝 メモ</option>
+            </select>
+            <input type="text" id="cm-add-activity-content" placeholder="内容" class="input" style="flex:1">
+            <button id="cm-add-activity-btn" class="ghost small">追加</button>
+          </div>
+          <div id="cm-activity-list" style="max-height:200px;overflow:auto;font-size:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button id="cm-save" class="primary">💾 保存</button>
+      <button id="cm-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div id="crm-import-prospect-modal" class="modal" hidden>
+  <div class="modal-content" style="max-width:700px">
+    <h3>📋 発見リストから顧客管理に取込</h3>
+    <p class="muted" style="font-size:12px">発見した企業を顧客管理リストに移します。チェックを入れて取込ボタンを押してください。</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input type="text" id="crm-imp-search" class="input" placeholder="検索..." style="flex:1">
+      <button id="crm-imp-select-all" class="ghost small">全選択</button>
+    </div>
+    <div id="crm-imp-list" style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:6px"></div>
+    <div class="modal-actions">
+      <button id="crm-imp-confirm" class="primary">選択した企業を取込</button>
+      <button id="crm-imp-close" class="ghost">キャンセル</button>
     </div>
   </div>
 </div>
@@ -929,9 +1234,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515r"></script>
-<script type="module" src="firebase-sync.js?v=20260515r"></script>
-<script src="data/regions.js?v=20260515r"></script>
-<script src="app.js?v=20260515r"></script>
+<script src="firebase-config.js?v=20260515s"></script>
+<script type="module" src="firebase-sync.js?v=20260515s"></script>
+<script src="data/regions.js?v=20260515s"></script>
+<script src="app.js?v=20260515s"></script>
 </body>
 </html>

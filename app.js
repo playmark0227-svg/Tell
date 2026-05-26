@@ -1242,6 +1242,7 @@ const store = {
   billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
   opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [] },
   feedback: {}, // companyId -> { rating: 'good'|'bad'|null, score_correction, comment, t }
+  crm: { customers: [] }, // 顧客管理リスト
 };
 
 function loadStore() {
@@ -1268,6 +1269,7 @@ function loadStore() {
     if (Array.isArray(d.billingHistory)) store.billingHistory = d.billingHistory;
     if (d.billingConfig) store.billingConfig = d.billingConfig;
     if (d.feedback) store.feedback = d.feedback;
+    if (d.crm) store.crm = d.crm;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1311,6 +1313,7 @@ function _saveStoreImpl() {
     billingHistory: store.billingHistory || [],
     billingConfig: store.billingConfig,
     feedback: store.feedback || {},
+    crm: store.crm || { customers: [] },
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -2218,6 +2221,9 @@ function saveCallRecord() {
   store.history.unshift({ id, status, t: Date.now(), memo: memo.slice(0,40) });
   store.history = store.history.slice(0, 100);
 
+  // 商談化なら CRM に自動取込
+  autoImportToCrm(id, status);
+
   saveStore();
   modal.hidden = true;
   renderResults();
@@ -2972,6 +2978,716 @@ function applyEvolvedProfile(evolved) {
   logAction('icp_evolved', evolved.insights || '');
   saveStore();
   renderICP(state.icp);
+}
+
+// status が「商談化」になったら自動で CRM に取込
+function hookStatusToCrm() {
+  // saveCallRecord 内で connection_outcome === 'meeting' のときに統合済みなので、ここでは保険的にイベント監視
+}
+
+// 通話記録モーダル保存時に商談化 → CRM 自動取込のフック
+function autoImportToCrm(companyId, outcome) {
+  if (outcome !== 'meeting') return;
+  ensureCrm();
+  // 既に CRM にあるかチェック
+  if (store.crm.customers.some(c => c.source_company_id === companyId)) return;
+  const c = findCompanyById(companyId);
+  if (!c) return;
+  createCrmCustomer({
+    name: c.name, phone: c.phone, website: c.website,
+    industry: c.industry, address: c.address,
+    prefecture: c.prefecture, city: c.city,
+    houjin_bangou: c.houjin_bangou,
+    contact_person: c.ai_decision_makers?.[0]?.name || '',
+    contact_title: c.ai_decision_makers?.[0]?.title || '',
+    source_company_id: companyId,
+    memo: c.ai_fit_evidence || '',
+    stage: 'meeting',  // 商談化なので「商談中」スタート
+  });
+}
+
+/* ============ タブナビゲーション ============ */
+function setupTopNav() {
+  document.querySelectorAll('.top-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      switchTopTab(tab);
+    });
+  });
+}
+
+function switchTopTab(tab) {
+  document.querySelectorAll('.top-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.hidden = (p.id !== `tab-${tab}`);
+  });
+  if (tab === 'crm') renderCrmAll();
+  else if (tab === 'dashboard') renderDashboardAll();
+  else if (tab === 'settings') renderSettingsPanel();
+}
+
+/* ============ CRM (顧客管理) モジュール ============ */
+const CRM_STAGES = [
+  { id: 'approach', label: 'アプローチ予定', color: '#94a3b8' },
+  { id: 'first_call', label: '初回架電', color: '#60a5fa' },
+  { id: 'meeting', label: '商談中', color: '#fbbf24' },
+  { id: 'proposal', label: '提案中', color: '#fb923c' },
+  { id: 'won', label: '受注 ✓', color: 'var(--good)' },
+  { id: 'lost', label: '失注 ✗', color: 'var(--danger)' },
+];
+
+function ensureCrm() {
+  if (!store.crm) store.crm = { customers: [] };
+  if (!Array.isArray(store.crm.customers)) store.crm.customers = [];
+}
+
+function createCrmCustomer(data = {}) {
+  ensureCrm();
+  const cust = {
+    id: 'cust_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    name: data.name || '',
+    phone: data.phone || '',
+    website: data.website || '',
+    industry: data.industry || '',
+    address: data.address || '',
+    prefecture: data.prefecture || '',
+    city: data.city || '',
+    contact_person: data.contact_person || '',
+    contact_title: data.contact_title || '',
+    contact_email: data.contact_email || '',
+    stage: data.stage || 'approach',
+    stage_changed_at: Date.now(),
+    deal_value: data.deal_value || 0,
+    deal_prob: data.deal_prob || 50,
+    close_date: data.close_date || '',
+    assigned_to: data.assigned_to || '',
+    next_action: data.next_action || '',
+    next_action_at: data.next_action_at || '',
+    next_action_note: data.next_action_note || '',
+    memo: data.memo || '',
+    activities: [],
+    tags: data.tags || [],
+    source_company_id: data.source_company_id || null,
+    houjin_bangou: data.houjin_bangou || '',
+    created_at: Date.now(),
+  };
+  store.crm.customers.push(cust);
+  logAction('crm_create', cust.name);
+  saveStore();
+  return cust;
+}
+
+function updateCrmCustomer(id, patch) {
+  ensureCrm();
+  const cust = store.crm.customers.find(c => c.id === id);
+  if (!cust) return null;
+  // Stage 変更時はタイムスタンプ更新 + アクティビティ追加
+  if (patch.stage && patch.stage !== cust.stage) {
+    cust.activities.unshift({
+      type: 'stage_change',
+      t: Date.now(),
+      content: `${CRM_STAGES.find(s=>s.id===cust.stage)?.label} → ${CRM_STAGES.find(s=>s.id===patch.stage)?.label}`,
+    });
+    cust.stage_changed_at = Date.now();
+  }
+  Object.assign(cust, patch);
+  logAction('crm_update', cust.name);
+  saveStore();
+  return cust;
+}
+
+function deleteCrmCustomer(id) {
+  ensureCrm();
+  const cust = store.crm.customers.find(c => c.id === id);
+  if (!cust) return;
+  store.crm.customers = store.crm.customers.filter(c => c.id !== id);
+  logAction('crm_delete', cust.name);
+  saveStore();
+}
+
+function addCrmActivity(custId, type, content) {
+  const cust = store.crm.customers?.find(c => c.id === custId);
+  if (!cust) return;
+  cust.activities = cust.activities || [];
+  cust.activities.unshift({ type, t: Date.now(), content: String(content || '').slice(0, 500) });
+  cust.activities = cust.activities.slice(0, 100);
+  saveStore();
+}
+
+function renderCrmAll() {
+  ensureCrm();
+  renderCrmKpis();
+  renderCrmPipeline();
+  renderCrmFollowups();
+}
+
+function renderCrmKpis() {
+  const el = document.getElementById('crm-kpis');
+  if (!el) return;
+  const custs = store.crm.customers || [];
+  const yen = n => '¥' + Number(n||0).toLocaleString('ja-JP');
+  const stageCount = (s) => custs.filter(c => c.stage === s).length;
+  const totalPipelineValue = custs
+    .filter(c => !['won','lost'].includes(c.stage))
+    .reduce((s, c) => s + (c.deal_value || 0) * (c.deal_prob||50) / 100, 0);
+  const wonValue = custs.filter(c => c.stage === 'won').reduce((s, c) => s + (c.deal_value || 0), 0);
+  const winRate = custs.filter(c => ['won','lost'].includes(c.stage)).length > 0
+    ? Math.round(100 * stageCount('won') / (stageCount('won') + stageCount('lost')))
+    : 0;
+  el.innerHTML = `
+    <div class="crm-kpi"><div class="crm-kpi-num">${custs.length}</div><div class="crm-kpi-lbl">顧客総数</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num">${stageCount('meeting') + stageCount('proposal')}</div><div class="crm-kpi-lbl">商談中</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--good)">${stageCount('won')}</div><div class="crm-kpi-lbl">受注</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num">${winRate}%</div><div class="crm-kpi-lbl">受注率</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--accent)">${yen(totalPipelineValue)}</div><div class="crm-kpi-lbl">パイプライン期待値</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--good)">${yen(wonValue)}</div><div class="crm-kpi-lbl">受注額累計</div></div>
+  `;
+}
+
+function renderCrmPipeline() {
+  const el = document.getElementById('crm-pipeline');
+  if (!el) return;
+  const custs = store.crm.customers || [];
+  const yen = n => '¥' + Number(n||0).toLocaleString('ja-JP');
+  const today = new Date(); today.setHours(0,0,0,0);
+  el.innerHTML = CRM_STAGES.map(stage => {
+    const stageCusts = custs.filter(c => c.stage === stage.id);
+    const cards = stageCusts.map(c => {
+      const nextDate = c.next_action_at ? new Date(c.next_action_at) : null;
+      const overdue = nextDate && nextDate < today;
+      const nextLabel = nextDate
+        ? `${overdue ? '⚠ 遅延 ' : '📅 '}${nextDate.toLocaleDateString('ja-JP')} ${c.next_action || ''}`
+        : '';
+      return `
+        <div class="pipeline-card" data-crm-id="${c.id}">
+          <div class="pipeline-card-name">${c.name || '(未設定)'}</div>
+          <div class="pipeline-card-meta">${c.industry || ''} ${c.contact_person ? '/ '+c.contact_person : ''}</div>
+          ${c.deal_value ? `<div class="pipeline-card-value">${yen(c.deal_value)} (${c.deal_prob||50}%)</div>` : ''}
+          ${nextLabel ? `<div class="pipeline-card-next ${overdue?'overdue':''}">${nextLabel}</div>` : ''}
+        </div>
+      `;
+    }).join('') || `<div class="empty-state" style="padding:20px;font-size:12px">なし</div>`;
+    return `
+      <div class="pipeline-col">
+        <div class="pipeline-col-header ${stage.id}">
+          <span>${stage.label}</span>
+          <span class="pipeline-col-count">${stageCusts.length}</span>
+        </div>
+        <div class="pipeline-cards" data-drop-stage="${stage.id}">
+          ${cards}
+        </div>
+      </div>
+    `;
+  }).join('');
+  // カードクリックで詳細モーダル
+  el.querySelectorAll('.pipeline-card').forEach(card => {
+    card.addEventListener('click', () => openCrmCustomerModal(card.dataset.crmId));
+  });
+}
+
+function renderCrmFollowups() {
+  const el = document.getElementById('crm-followup-list');
+  if (!el) return;
+  const custs = store.crm.customers || [];
+  const withAction = custs.filter(c => c.next_action_at).sort((a,b) =>
+    new Date(a.next_action_at) - new Date(b.next_action_at));
+  if (withAction.length === 0) {
+    el.classList.add('empty-state');
+    el.innerHTML = 'フォローアップ予定なし';
+    return;
+  }
+  el.classList.remove('empty-state');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+  el.innerHTML = withAction.slice(0, 20).map(c => {
+    const d = new Date(c.next_action_at);
+    let cls = 'followup-upcoming';
+    if (d < today) cls = 'followup-overdue';
+    else if (d < tomorrow) cls = 'followup-today';
+    return `
+      <div class="followup-item ${cls}" data-crm-id="${c.id}" style="cursor:pointer">
+        <div>
+          <strong>${c.name}</strong>
+          <small style="color:var(--muted);margin-left:8px">${c.contact_person||''} ${c.phone?'/ '+c.phone:''}</small>
+        </div>
+        <div style="font-size:12px;text-align:right">
+          <div>${d.toLocaleString('ja-JP', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>
+          <small style="color:var(--muted)">${c.next_action || 'アクション'}</small>
+        </div>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('.followup-item').forEach(item => {
+    item.addEventListener('click', () => openCrmCustomerModal(item.dataset.crmId));
+  });
+}
+
+/* ============ CRM 詳細モーダル ============ */
+let _crmEditingId = null;
+
+function openCrmCustomerModal(id) {
+  ensureCrm();
+  const cust = id ? store.crm.customers.find(c => c.id === id) : null;
+  _crmEditingId = id || null;
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  document.getElementById('cm-name').textContent = cust?.name || '新規顧客';
+  document.getElementById('cm-meta').textContent = cust ? `登録: ${new Date(cust.created_at).toLocaleString('ja-JP')}` : '';
+  setVal('cm-name-input', cust?.name);
+  setVal('cm-phone', cust?.phone);
+  setVal('cm-industry', cust?.industry);
+  setVal('cm-address', cust?.address);
+  setVal('cm-website', cust?.website);
+  setVal('cm-contact-person', cust?.contact_person);
+  setVal('cm-contact-title', cust?.contact_title);
+  setVal('cm-contact-email', cust?.contact_email);
+  setVal('cm-stage', cust?.stage || 'approach');
+  setVal('cm-deal-value', cust?.deal_value || '');
+  setVal('cm-deal-prob', cust?.deal_prob || 50);
+  setVal('cm-close-date', cust?.close_date);
+  setVal('cm-assigned', cust?.assigned_to);
+  setVal('cm-next-action', cust?.next_action);
+  setVal('cm-next-action-at', cust?.next_action_at ? cust.next_action_at.slice(0, 16) : '');
+  setVal('cm-next-action-note', cust?.next_action_note);
+  setVal('cm-memo', cust?.memo);
+  renderCrmActivityList(cust);
+  document.getElementById('crm-customer-modal').hidden = false;
+}
+
+function renderCrmActivityList(cust) {
+  const el = document.getElementById('cm-activity-list');
+  if (!cust || !Array.isArray(cust.activities) || cust.activities.length === 0) {
+    el.innerHTML = '<div class="muted" style="text-align:center;padding:16px">履歴なし</div>';
+    return;
+  }
+  const ICON = { call: '📞', email: '📧', meeting: '🤝', note: '📝', stage_change: '🔀' };
+  el.innerHTML = cust.activities.slice(0, 30).map(a => `
+    <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-soft)">
+      <span>${ICON[a.type]||'•'}</span>
+      <div style="flex:1">
+        <div style="font-size:11px;color:var(--muted)">${new Date(a.t).toLocaleString('ja-JP')}</div>
+        <div>${a.content || ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function saveCrmCustomerFromModal() {
+  const data = {
+    name: document.getElementById('cm-name-input').value.trim(),
+    phone: document.getElementById('cm-phone').value.trim(),
+    industry: document.getElementById('cm-industry').value.trim(),
+    address: document.getElementById('cm-address').value.trim(),
+    website: document.getElementById('cm-website').value.trim(),
+    contact_person: document.getElementById('cm-contact-person').value.trim(),
+    contact_title: document.getElementById('cm-contact-title').value.trim(),
+    contact_email: document.getElementById('cm-contact-email').value.trim(),
+    stage: document.getElementById('cm-stage').value,
+    deal_value: parseInt(document.getElementById('cm-deal-value').value, 10) || 0,
+    deal_prob: parseInt(document.getElementById('cm-deal-prob').value, 10) || 50,
+    close_date: document.getElementById('cm-close-date').value,
+    assigned_to: document.getElementById('cm-assigned').value.trim(),
+    next_action: document.getElementById('cm-next-action').value,
+    next_action_at: document.getElementById('cm-next-action-at').value,
+    next_action_note: document.getElementById('cm-next-action-note').value.trim(),
+    memo: document.getElementById('cm-memo').value.trim(),
+  };
+  if (!data.name) { alert('会社名は必須です'); return; }
+  if (_crmEditingId) {
+    updateCrmCustomer(_crmEditingId, data);
+  } else {
+    createCrmCustomer(data);
+  }
+  document.getElementById('crm-customer-modal').hidden = true;
+  renderCrmAll();
+}
+
+function setupCrmModal() {
+  const modal = document.getElementById('crm-customer-modal');
+  if (!modal) return;
+  document.getElementById('cm-close').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+  document.getElementById('cm-save').addEventListener('click', saveCrmCustomerFromModal);
+  document.getElementById('cm-delete').addEventListener('click', () => {
+    if (!_crmEditingId) return;
+    if (!confirm('この顧客を削除しますか?')) return;
+    deleteCrmCustomer(_crmEditingId);
+    modal.hidden = true;
+    renderCrmAll();
+  });
+  document.getElementById('cm-add-activity-btn').addEventListener('click', () => {
+    if (!_crmEditingId) {
+      alert('先に顧客を保存してください');
+      return;
+    }
+    const type = document.getElementById('cm-add-activity-type').value;
+    const content = document.getElementById('cm-add-activity-content').value.trim();
+    if (!content) return;
+    addCrmActivity(_crmEditingId, type, content);
+    document.getElementById('cm-add-activity-content').value = '';
+    renderCrmActivityList(store.crm.customers.find(c => c.id === _crmEditingId));
+  });
+  // CRM トップレベル ボタン
+  document.getElementById('crm-add-btn')?.addEventListener('click', () => openCrmCustomerModal(null));
+  document.getElementById('crm-import-prospect-btn')?.addEventListener('click', openCrmImportModal);
+  document.getElementById('crm-export-btn')?.addEventListener('click', exportCrmCsv);
+}
+
+function openCrmImportModal() {
+  const modal = document.getElementById('crm-import-prospect-modal');
+  const list = document.getElementById('crm-imp-list');
+  const ranked = (state.scored || []).filter(c => !isCompanyInCrm(c.id)).slice(0, 100);
+  if (ranked.length === 0) {
+    list.innerHTML = '<div class="empty-state">取込可能な企業がありません</div>';
+  } else {
+    list.innerHTML = ranked.map(c => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid var(--border-soft);cursor:pointer">
+        <input type="checkbox" class="imp-check" data-imp-id="${c.id}">
+        <span style="flex:1;font-size:13px">
+          <strong>${c.name}</strong>
+          <small style="color:var(--muted)"> ${c.industry||''} / ${c.prefecture||''}${c.city||''} / 適合度${c.score||0}</small>
+        </span>
+        ${c.phone ? `<small>${c.phone}</small>` : ''}
+      </label>
+    `).join('');
+  }
+  modal.hidden = false;
+}
+
+function isCompanyInCrm(prospectId) {
+  ensureCrm();
+  return store.crm.customers.some(c => c.source_company_id === prospectId);
+}
+
+function setupCrmImport() {
+  document.getElementById('crm-imp-close')?.addEventListener('click', () => {
+    document.getElementById('crm-import-prospect-modal').hidden = true;
+  });
+  document.getElementById('crm-imp-select-all')?.addEventListener('click', () => {
+    document.querySelectorAll('.imp-check').forEach(cb => cb.checked = true);
+  });
+  document.getElementById('crm-imp-search')?.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('#crm-imp-list label').forEach(lbl => {
+      lbl.style.display = lbl.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+  document.getElementById('crm-imp-confirm')?.addEventListener('click', () => {
+    const ids = [...document.querySelectorAll('.imp-check:checked')].map(cb => parseInt(cb.dataset.impId, 10));
+    if (ids.length === 0) { alert('1社以上選択してください'); return; }
+    let imported = 0;
+    for (const id of ids) {
+      const c = findCompanyById(id);
+      if (!c) continue;
+      createCrmCustomer({
+        name: c.name, phone: c.phone, website: c.website,
+        industry: c.industry, address: c.address,
+        prefecture: c.prefecture, city: c.city,
+        houjin_bangou: c.houjin_bangou,
+        contact_person: c.ai_decision_makers?.[0]?.name || '',
+        contact_title: c.ai_decision_makers?.[0]?.title || '',
+        source_company_id: id,
+        memo: c.ai_fit_evidence || '',
+        stage: 'approach',
+      });
+      imported++;
+    }
+    document.getElementById('crm-import-prospect-modal').hidden = true;
+    renderCrmAll();
+    alert(`✓ ${imported}社を顧客管理に取込みました`);
+  });
+}
+
+function exportCrmCsv() {
+  ensureCrm();
+  if (store.crm.customers.length === 0) { alert('顧客なし'); return; }
+  const headers = ['会社名','ステージ','電話','業種','所在地','HP','担当者','役職','メール','想定取引額','確度%','クロージング予定日','担当営業','次回アクション','次回予定','メモ','登録日'];
+  const stageJp = { approach:'アプローチ予定', first_call:'初回架電', meeting:'商談中', proposal:'提案中', won:'受注', lost:'失注' };
+  const lines = [headers.join(',')];
+  const esc = v => `"${String(v||'').replace(/"/g,'""').replace(/\n/g,' ')}"`;
+  for (const c of store.crm.customers) {
+    lines.push([
+      esc(c.name), esc(stageJp[c.stage]), esc(c.phone), esc(c.industry),
+      esc(c.address), esc(c.website), esc(c.contact_person), esc(c.contact_title),
+      esc(c.contact_email), c.deal_value||0, c.deal_prob||0,
+      esc(c.close_date), esc(c.assigned_to), esc(c.next_action), esc(c.next_action_at),
+      esc(c.memo), new Date(c.created_at).toLocaleString('ja-JP'),
+    ].join(','));
+  }
+  downloadFile(`tell-crm-${Date.now()}.csv`, lines.join('\n'));
+  logAction('crm_export_csv', `${store.crm.customers.length}社`);
+}
+
+/* ============ ダッシュボード ============ */
+function renderDashboardAll() {
+  ensureCrm();
+  renderKpiGrid();
+  renderFunnel();
+  renderPipelineValue();
+  renderDashByIndustry();
+  renderDashByRegion();
+  renderDashActivity();
+}
+
+function getDashPeriodFilter() {
+  const p = document.getElementById('dash-period')?.value || 'month';
+  const now = new Date();
+  if (p === 'week') {
+    const start = new Date(now); start.setDate(start.getDate() - 7);
+    return start.getTime();
+  } else if (p === 'month') {
+    return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  }
+  return 0; // all
+}
+
+function renderKpiGrid() {
+  const el = document.getElementById('kpi-grid');
+  if (!el) return;
+  const since = getDashPeriodFilter();
+  const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+  // 期間内のhistory + callRecords集計
+  const history = (store.history || []).filter(h => h.t >= since);
+  const calls = history.filter(h => ['called','connected','absent','rejected'].includes(h.status)).length;
+  const connected = history.filter(h => h.status === 'connected').length;
+  const meetings = history.filter(h => h.status === 'meeting').length;
+  const custs = (store.crm?.customers || []).filter(c => c.created_at >= since);
+  const wonCust = (store.crm?.customers || []).filter(c => c.stage === 'won' && c.stage_changed_at >= since);
+  const wonValue = wonCust.reduce((s,c) => s + (c.deal_value||0), 0);
+  const newCusts = custs.length;
+  el.innerHTML = `
+    <div class="crm-kpi"><div class="crm-kpi-num">${calls}</div><div class="crm-kpi-lbl">📞 架電数</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--accent)">${connected}</div><div class="crm-kpi-lbl">繋がった</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--mid)">${meetings}</div><div class="crm-kpi-lbl">🤝 商談化</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num">${newCusts}</div><div class="crm-kpi-lbl">新規顧客</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--good)">${wonCust.length}</div><div class="crm-kpi-lbl">✓ 受注</div></div>
+    <div class="crm-kpi"><div class="crm-kpi-num" style="color:var(--good)">${yen(wonValue)}</div><div class="crm-kpi-lbl">受注額</div></div>
+  `;
+}
+
+function renderFunnel() {
+  const el = document.getElementById('dash-funnel');
+  if (!el) return;
+  const since = getDashPeriodFilter();
+  const history = (store.history || []).filter(h => h.t >= since);
+  const calls = history.filter(h => ['called','connected','absent','rejected'].includes(h.status)).length;
+  const connected = history.filter(h => h.status === 'connected').length;
+  const meetings = history.filter(h => h.status === 'meeting').length;
+  const won = (store.crm?.customers || []).filter(c => c.stage === 'won' && c.stage_changed_at >= since).length;
+  const max = Math.max(calls, 1);
+  const rows = [
+    ['架電', calls, ''],
+    ['接触', connected, calls > 0 ? `${Math.round(100*connected/calls)}%` : ''],
+    ['商談', meetings, connected > 0 ? `${Math.round(100*meetings/connected)}%` : ''],
+    ['受注', won, meetings > 0 ? `${Math.round(100*won/meetings)}%` : ''],
+  ];
+  el.innerHTML = rows.map(([label, count, conv]) => `
+    <div class="funnel-row">
+      <span class="funnel-label">${label}</span>
+      <div class="funnel-bar-bg">
+        <div class="funnel-bar-fill" style="width:${Math.round(100*count/max)}%">${count}</div>
+      </div>
+      <span class="funnel-conv">${conv}</span>
+    </div>
+  `).join('');
+}
+
+function renderPipelineValue() {
+  const el = document.getElementById('dash-pipeline-value');
+  if (!el) return;
+  const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+  const custs = (store.crm?.customers || []).filter(c => !['won','lost'].includes(c.stage));
+  const byStage = {};
+  for (const c of custs) {
+    byStage[c.stage] = byStage[c.stage] || { count: 0, weighted: 0, total: 0 };
+    byStage[c.stage].count++;
+    byStage[c.stage].total += (c.deal_value || 0);
+    byStage[c.stage].weighted += (c.deal_value || 0) * (c.deal_prob || 50) / 100;
+  }
+  const stagesActive = CRM_STAGES.filter(s => !['won','lost'].includes(s.id));
+  el.innerHTML = stagesActive.map(s => {
+    const d = byStage[s.id] || { count: 0, weighted: 0, total: 0 };
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border-soft)">
+        <span>${s.label}</span>
+        <span style="text-align:right;font-size:12px">
+          <strong>${d.count}社</strong><br>
+          <small style="color:var(--muted)">期待値 ${yen(d.weighted)}</small>
+        </span>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderDashByIndustry() {
+  const el = document.getElementById('dash-by-industry');
+  if (!el) return;
+  const custs = store.crm?.customers || [];
+  const byInd = {};
+  for (const c of custs) byInd[c.industry || '未設定'] = (byInd[c.industry || '未設定'] || 0) + 1;
+  const top = Object.entries(byInd).sort((a,b) => b[1]-a[1]).slice(0, 6);
+  if (top.length === 0) {
+    el.innerHTML = '<div class="empty-state">データなし</div>';
+    return;
+  }
+  const max = top[0]?.[1] || 1;
+  el.innerHTML = top.map(([k,v]) => `
+    <div class="bar-chart-row">
+      <span class="bar-chart-label">${k.slice(0,10)}</span>
+      <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*v/max)}%"></div></div>
+      <span class="bar-chart-val">${v}</span>
+    </div>
+  `).join('');
+}
+
+function renderDashByRegion() {
+  const el = document.getElementById('dash-by-region');
+  if (!el) return;
+  const custs = store.crm?.customers || [];
+  const byPref = {};
+  for (const c of custs) byPref[c.prefecture || '不明'] = (byPref[c.prefecture || '不明'] || 0) + 1;
+  const top = Object.entries(byPref).sort((a,b) => b[1]-a[1]).slice(0, 6);
+  if (top.length === 0) {
+    el.innerHTML = '<div class="empty-state">データなし</div>';
+    return;
+  }
+  const max = top[0]?.[1] || 1;
+  el.innerHTML = top.map(([k,v]) => `
+    <div class="bar-chart-row">
+      <span class="bar-chart-label">${k}</span>
+      <div class="bar-chart-fill"><div class="bar-chart-bar" style="width:${Math.round(100*v/max)}%;background:var(--good)"></div></div>
+      <span class="bar-chart-val">${v}</span>
+    </div>
+  `).join('');
+}
+
+function renderDashActivity() {
+  const el = document.getElementById('dash-activity');
+  if (!el) return;
+  const ICON = { call:'📞', email:'📧', meeting:'🤝', note:'📝', stage_change:'🔀', save:'⭐', dnc:'🚫', search_started:'🔍' };
+  // CRM activity + usageLog からマージ
+  const events = [];
+  for (const c of (store.crm?.customers || [])) {
+    for (const a of (c.activities || [])) {
+      events.push({ ...a, customer: c.name, source: 'crm' });
+    }
+  }
+  for (const e of (store.usageLog || []).slice(0, 50)) {
+    events.push({ t: e.t, type: e.action, content: e.ref, customer: '', source: 'log' });
+  }
+  events.sort((a, b) => b.t - a.t);
+  const top = events.slice(0, 20);
+  if (top.length === 0) {
+    el.innerHTML = '<div class="empty-state">アクティビティなし</div>';
+    return;
+  }
+  el.innerHTML = top.map(e => `
+    <div class="activity-item">
+      <span class="activity-time">${new Date(e.t).toLocaleString('ja-JP', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+      <span class="activity-icon">${ICON[e.type] || '•'}</span>
+      <div class="activity-content">
+        ${e.customer ? `<strong>${e.customer}</strong>: ` : ''}${e.content || ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+/* ============ 設定パネル (全設定の集約) ============ */
+function renderSettingsPanel() {
+  // アカウント表示
+  const acctEl = document.getElementById('settings-account');
+  if (acctEl) {
+    if (_currentFbUser) {
+      acctEl.innerHTML = `
+        <div style="font-size:14px"><strong>${_currentFbUser.email}</strong></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${isAdminUser() ? '管理者' : '一般ユーザー'} / クラウド同期中</div>
+        <button id="settings-signout" class="ghost" style="margin-top:8px">ログアウト</button>
+      `;
+      document.getElementById('settings-signout')?.addEventListener('click', async () => {
+        if (!confirm('ログアウトしますか?')) return;
+        try { await window.firebaseApi.signOut(); } catch {}
+      });
+    } else if (window.FIREBASE_READY) {
+      acctEl.innerHTML = `
+        <div style="color:var(--muted);font-size:13px">未ログイン (ローカルモード)</div>
+        <button id="settings-login" class="primary" style="margin-top:8px">ログイン</button>
+      `;
+      document.getElementById('settings-login')?.addEventListener('click', () => {
+        document.getElementById('login-modal').hidden = false;
+      });
+    } else {
+      acctEl.innerHTML = '<div style="color:var(--muted);font-size:13px">Firebase未設定 (ローカルモード)</div>';
+    }
+  }
+  // 管理者カードの表示制御
+  const masterCard = document.getElementById('settings-master-card');
+  if (masterCard) masterCard.style.display = isAdminUser() ? '' : 'none';
+  // 課金表示
+  const billEl = document.getElementById('settings-billing');
+  if (billEl) {
+    const bill = calcCurrentBill();
+    const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+    billEl.innerHTML = `
+      <table style="font-size:13px;width:100%">
+        <tr><td>基本料金</td><td style="text-align:right">${yen(bill.base)}</td></tr>
+        <tr><td>Web検索 (${(store.billing?.searches||0).toLocaleString()}回)</td><td style="text-align:right">${yen(bill.search)}</td></tr>
+        <tr><td>AI評価 (${(store.billing?.aiEvals||0).toLocaleString()}件)</td><td style="text-align:right">${yen(bill.ai)}</td></tr>
+        <tr><td>HP取得 (${(store.billing?.hpFetches||0).toLocaleString()}回)</td><td style="text-align:right">${yen(bill.fetch)}</td></tr>
+        <tr style="border-top:1px solid var(--border);font-weight:600"><td>今月合計</td><td style="text-align:right;color:var(--accent)">${yen(bill.total)}</td></tr>
+      </table>
+    `;
+  }
+  // 各設定の現在値を反映
+  const sync = (id, val) => { const el = document.getElementById(id); if (el) { if (el.type === 'checkbox') el.checked = !!val; else el.value = val; }};
+  sync('settings-quality-mode', store.opts.qualityMode !== false);
+  sync('settings-ensemble-mode', store.opts.ensembleMode === true);
+  sync('settings-brave-pages', String(store.opts.bravePages || 2));
+  sync('settings-exclude-dnc', store.opts.excludeDnc);
+  sync('settings-saved-only', store.opts.savedOnly);
+  sync('settings-dark', store.opts.dark);
+}
+
+function setupSettingsPanel() {
+  // 設定変更時の同期
+  const bindToggle = (id, key, after) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => {
+      store.opts[key] = el.type === 'checkbox' ? el.checked : el.value;
+      saveStore();
+      if (after) after();
+    });
+  };
+  bindToggle('settings-quality-mode', 'qualityMode');
+  bindToggle('settings-ensemble-mode', 'ensembleMode');
+  bindToggle('settings-brave-pages', 'bravePages', () => {
+    store.opts.bravePages = parseInt(store.opts.bravePages, 10) || 2;
+  });
+  bindToggle('settings-exclude-dnc', 'excludeDnc', renderResults);
+  bindToggle('settings-saved-only', 'savedOnly', renderResults);
+  bindToggle('settings-dark', 'dark', () => {
+    if (store.opts.dark) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+  });
+  document.getElementById('settings-open-master')?.addEventListener('click', () => {
+    if (typeof openMasterAdmin === 'function') openMasterAdmin();
+  });
+  document.getElementById('settings-view-tos')?.addEventListener('click', () => showTosModal(true));
+  document.getElementById('settings-export-log')?.addEventListener('click', exportUsageLog);
+  document.getElementById('settings-clear-cache')?.addEventListener('click', () => {
+    if (!confirm('HP取得 + AI評価のキャッシュを削除しますか?')) return;
+    clearAllCaches();
+    alert('キャッシュをクリアしました');
+  });
+  document.getElementById('settings-reset-all')?.addEventListener('click', () => {
+    if (!confirm('全データをリセットします。本当によろしいですか?')) return;
+    store.saved.clear(); store.dnc.clear();
+    if (store.dncPhones) store.dncPhones.clear();
+    store.status = {}; store.notes = {}; store.history = [];
+    store.usageLog = [];
+    store.crm = { customers: [] };
+    saveStore(); renderResults(); renderSidebar(); renderCrmAll();
+    alert('リセット完了');
+  });
 }
 
 /* ============ ユーザーフィードバック (AI 自己改善ループ) ============ */
@@ -6878,6 +7594,12 @@ async function init() {
   setupRoleplayModal();
   setupBulkActions();
   setupKeyboardShortcuts();
+  setupTopNav();
+  setupCrmModal();
+  setupCrmImport();
+  setupSettingsPanel();
+  // 「商談化」status を CRM に自動連動
+  hookStatusToCrm();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {

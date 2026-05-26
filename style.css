@@ -1279,3 +1279,359 @@ footer a { color: var(--accent); }
 
   .sidebar-toggle { top: 8px; left: 8px; width: 38px; height: 38px; font-size: 18px; }
 }
+
+/* ========================================
+   Phase27: UI 製品版アップグレード
+   ======================================== */
+
+/* トップナビゲーション */
+.top-nav {
+  display: flex;
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 56px;
+  box-shadow: var(--shadow-sm);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  gap: 24px;
+}
+.top-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text);
+}
+.brand-mark { font-size: 22px; }
+.brand-name { font-size: 18px; letter-spacing: -0.5px; }
+.brand-tag {
+  font-size: 10px;
+  background: var(--accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.top-nav-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.top-tab {
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.top-tab:hover { background: var(--bg); color: var(--text); }
+.top-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+.top-nav-right { display: flex; align-items: center; gap: 12px; }
+.top-nav-user { font-size: 12px; color: var(--muted); }
+
+/* タブパネル */
+.tab-panel { display: block; }
+.tab-panel[hidden] { display: none; }
+
+/* ページヘッダ */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin: 24px 0 16px 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+.page-header .muted { margin-top: 4px; font-size: 13px; }
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* カード */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 12px;
+}
+.card h3 { margin: 0 0 12px 0; font-size: 15px; font-weight: 600; }
+.card h4 { margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.card.danger-zone { border-color: var(--danger); }
+.card.danger-zone h3 { color: var(--danger); }
+
+/* ボタンスタイル */
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+button.primary:hover { opacity: 0.9; }
+button.danger {
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* インプット */
+.input, .select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+  width: 100%;
+}
+.input:focus, .select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* 設定グリッド */
+.settings-sections { display: flex; flex-direction: column; gap: 16px; max-width: 900px; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.kv.col { flex-direction: column; align-items: stretch; }
+.kv.col span { margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+
+.info-box {
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 12px;
+  border-left: 3px solid var(--accent);
+}
+
+/* CRM KPI */
+.crm-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.crm-kpi {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.crm-kpi-num {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+.crm-kpi-lbl {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.crm-kpi-trend { font-size: 11px; margin-top: 6px; }
+.crm-kpi-trend.up { color: var(--good); }
+.crm-kpi-trend.down { color: var(--danger); }
+
+/* CRM Pipeline (Kanban) */
+.crm-pipeline-wrap {
+  overflow-x: auto;
+  margin-bottom: 20px;
+}
+.crm-pipeline {
+  display: flex;
+  gap: 12px;
+  min-width: max-content;
+  padding-bottom: 4px;
+}
+.pipeline-col {
+  background: var(--bg);
+  border-radius: 10px;
+  width: 280px;
+  flex-shrink: 0;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+.pipeline-col-header {
+  padding: 10px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.pipeline-col-header.approach { border-bottom-color: #94a3b8; }
+.pipeline-col-header.first_call { border-bottom-color: #60a5fa; }
+.pipeline-col-header.meeting { border-bottom-color: #fbbf24; }
+.pipeline-col-header.proposal { border-bottom-color: #fb923c; }
+.pipeline-col-header.won { border-bottom-color: var(--good); }
+.pipeline-col-header.lost { border-bottom-color: var(--danger); }
+.pipeline-col-count {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.pipeline-cards {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 200px;
+}
+.pipeline-card {
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: var(--shadow-sm);
+}
+.pipeline-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.pipeline-card-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.pipeline-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.pipeline-card-value { font-size: 12px; font-weight: 600; color: var(--accent); }
+.pipeline-card-next {
+  margin-top: 6px;
+  font-size: 11px;
+  padding: 3px 6px;
+  background: var(--bg);
+  border-radius: 4px;
+  display: inline-block;
+}
+.pipeline-card-next.overdue { background: rgba(220,0,0,.1); color: var(--danger); }
+
+/* フォローアップリスト */
+.crm-followups { margin-top: 20px; }
+.crm-followups h2 { font-size: 16px; margin: 0 0 12px 0; }
+.followup-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.followup-overdue { border-left: 3px solid var(--danger); }
+.followup-today { border-left: 3px solid var(--mid); }
+.followup-upcoming { border-left: 3px solid var(--accent); }
+
+.empty-state {
+  text-align: center;
+  padding: 32px;
+  color: var(--muted);
+  background: var(--panel);
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+}
+
+/* ダッシュボード */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.dashboard-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 768px) {
+  .dashboard-row { grid-template-columns: 1fr; }
+  .crm-modal-body { grid-template-columns: 1fr !important; }
+}
+
+/* ファネル */
+.funnel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.funnel-label { width: 90px; font-size: 12px; color: var(--muted); }
+.funnel-bar-bg {
+  flex: 1;
+  background: var(--bg);
+  height: 28px;
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.funnel-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #60a5fa);
+  border-radius: 4px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.funnel-conv {
+  width: 60px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* アクティビティタイムライン */
+.activity-item {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+  align-items: start;
+  font-size: 13px;
+}
+.activity-time { width: 100px; color: var(--muted); font-size: 11px; }
+.activity-icon { font-size: 16px; }
+.activity-content { flex: 1; }
+
+/* モーダル全体的に磨き */
+.modal-content {
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.2);
+}
+.modal-actions { gap: 8px; }
