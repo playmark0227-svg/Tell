@@ -1043,6 +1043,20 @@ footer a { color: var(--accent); }
 .master-pane h4 { margin: 0 0 10px 0; font-size: 14px; font-weight: 600; }
 .master-pane[hidden] { display: none !important; }
 
+/* Deep AI 評価関連の小バッジ */
+.meta-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  margin-top: 2px;
+  border: 1px solid var(--border);
+}
+.meta-tag.good { background: rgba(0,150,80,.1); color: var(--good); border-color: var(--good); }
+.meta-tag.warn { background: rgba(220,150,0,.1); color: var(--mid); border-color: var(--mid); }
+
 /* SaaS モード: 「管理者が設定済み」表示 */
 .system-managed-note {
   background: var(--bg); padding: 10px; border-radius: 6px;

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260514v">
+<link rel="stylesheet" href="style.css?v=20260514w">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -237,6 +237,10 @@
               <option value="4">4ページ (中小企業まで)</option>
             </select>
           </label>
+          <label class="kv" title="ONにすると Opus + extended thinking + 国税庁API + 引用必須評価 + 深掘りクロールでリスト品質を最大化。1社あたりのコストが上がる(Haikuのみの約4倍)">
+            <span>🧠 高品質モード(Deep Eval)<br><small style="color:var(--muted);font-weight:normal">Opus + 拡張思考 + 法人番号API + 引用必須</small></span>
+            <input type="checkbox" id="ma-quality-mode" checked>
+          </label>
           <button class="side-btn" id="ma-conn-save" style="margin-top:12px;background:var(--accent);color:#fff">この接続設定を全ユーザーに配信</button>
           <div id="ma-conn-status" class="muted" style="font-size:12px;margin-top:6px"></div>
         </div>
@@ -360,7 +364,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260514v</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260514w</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -808,9 +812,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260514v"></script>
-<script type="module" src="firebase-sync.js?v=20260514v"></script>
-<script src="data/regions.js?v=20260514v"></script>
-<script src="app.js?v=20260514v"></script>
+<script src="firebase-config.js?v=20260514w"></script>
+<script type="module" src="firebase-sync.js?v=20260514w"></script>
+<script src="data/regions.js?v=20260514w"></script>
+<script src="app.js?v=20260514w"></script>
 </body>
 </html>

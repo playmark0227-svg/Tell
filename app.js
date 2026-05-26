@@ -831,7 +831,7 @@ function scoreCompany(company, icp, strategy, intentSignals) {
       ...company,
       score: company.ai_score,
       reasoning: company.ai_reasoning || '',
-      aiComment: `AI評価(HP内容ベース): ${company.ai_reasoning || ''}`,
+      aiComment: buildAIComment(company, icp, strategy, new Set(), company.ai_score),
     };
   }
   let score = 0;
@@ -920,6 +920,28 @@ const SIG_LABELS = {
 function sigLabel(s) { return SIG_LABELS[s] || s; }
 
 function buildAIComment(company, icp, strategy, signals, score) {
+  // Deep AI 評価結果があれば、それを最優先で表示 (引用付き)
+  if (company._used_deep_eval && company.ai_reasoning) {
+    const parts = [];
+    parts.push(company.ai_reasoning);
+    if (company.ai_fit_evidence) parts.push(`根拠: ${company.ai_fit_evidence}`);
+    if (Array.isArray(company.ai_buying_signals) && company.ai_buying_signals.length > 0) {
+      parts.push(`購買シグナル: ${company.ai_buying_signals.slice(0,3).join('、')}`);
+    }
+    if (Array.isArray(company.ai_fit_citations) && company.ai_fit_citations.length > 0) {
+      const cites = company.ai_fit_citations.slice(0, 2).map(c => `「${(c.quote||'').slice(0,40)}」`).join(' / ');
+      parts.push(`HPより: ${cites}`);
+    }
+    if (Array.isArray(company.ai_risks) && company.ai_risks.length > 0) {
+      parts.push(`⚠リスク: ${company.ai_risks.slice(0,2).join('、')}`);
+    }
+    if (company.ai_confidence) {
+      const confJp = { low: '低', medium: '中', high: '高' }[company.ai_confidence] || company.ai_confidence;
+      parts.push(`確信度: ${confJp}`);
+    }
+    return parts.join(' / ');
+  }
+  // 従来のルールベース
   if (score >= 70) {
     const why = [];
     if (signals.has('has_office') && strategy?.target_signals?.includes('has_office')) why.push('オフィスワーク中心で導入の物理的余地がある');
@@ -1071,9 +1093,17 @@ function renderRow(c) {
           <button class="act-script" title="スクリプト">📜</button>
         </div>
       </td>
-      <td data-label="会社名">${cleanCompanyName(c.name) || c.name}</td>
+      <td data-label="会社名">
+        ${cleanCompanyName(c.name) || c.name}
+        ${c.houjin_bangou ? `<div class="meta-tag" title="国税庁登記情報で確認済み">🆔 ${c.houjin_bangou}</div>` : ''}
+        ${c.houjin_not_registered ? `<div class="meta-tag warn" title="国税庁に登記なし(任意団体・個人事業の可能性)">⚠ 未登記</div>` : ''}
+        ${c._used_deep_eval ? `<div class="meta-tag good" title="Opus + 拡張思考で深く評価">🧠 Deep</div>` : ''}
+      </td>
       <td data-label="業種">${c.industry}</td>
-      <td data-label="所在地">${c.prefecture}${c.city ? ' ' + c.city : ''}</td>
+      <td data-label="所在地">
+        ${c.prefecture||''}${c.city ? ' ' + c.city : ''}
+        ${c.official_address && c.official_address !== c.address ? `<div class="meta-tag" title="国税庁公式所在地">📋 ${c.official_address.slice(0,40)}</div>` : ''}
+      </td>
       <td data-label="規模">${c.employees}名</td>
       <td data-label="電話" class="phone">${phoneCell}</td>
       <td data-label="状況">
@@ -1717,6 +1747,7 @@ async function loadAndApplySystemConfig() {
       if (pub.workerUrl) store.opts.braveProxy = pub.workerUrl;
       if (pub.aiModel) store.opts.aiModel = pub.aiModel;
       if (typeof pub.defaultBravePages === 'number') store.opts.bravePages = pub.defaultBravePages;
+      if (typeof pub.qualityMode === 'boolean') store.opts.qualityMode = pub.qualityMode;
       if (pub.billingConfig) store.billingConfig = pub.billingConfig;
       // UIの値を反映
       const braveInput = document.getElementById('opt-brave-input');
@@ -1814,6 +1845,8 @@ async function openMasterAdmin() {
   setVal('ma-worker-url', (_systemPublicConfig && _systemPublicConfig.workerUrl) || store.opts.braveProxy || '');
   setVal('ma-ai-model', (_systemPublicConfig && _systemPublicConfig.aiModel) || store.opts.aiModel || 'claude-haiku-4-5-20251001');
   setVal('ma-default-pages', (_systemPublicConfig && _systemPublicConfig.defaultBravePages) || 2);
+  const qmEl = document.getElementById('ma-quality-mode');
+  if (qmEl) qmEl.checked = (_systemPublicConfig?.qualityMode !== false) && (store.opts.qualityMode !== false);
   // APIキー
   setVal('ma-anthropic-key', (_systemAdminConfig && _systemAdminConfig.anthropicKey) || '');
   setVal('ma-brave-key', (_systemAdminConfig && _systemAdminConfig.braveKey) || '');
@@ -1837,6 +1870,7 @@ async function saveConnectionConfig() {
     workerUrl: document.getElementById('ma-worker-url').value.trim(),
     aiModel: document.getElementById('ma-ai-model').value,
     defaultBravePages: parseInt(document.getElementById('ma-default-pages').value, 10) || 2,
+    qualityMode: document.getElementById('ma-quality-mode').checked,
     billingConfig: getBillingConfig(),
   };
   try {
@@ -1846,6 +1880,7 @@ async function saveConnectionConfig() {
     if (cfg.workerUrl) store.opts.braveProxy = cfg.workerUrl;
     if (cfg.aiModel) store.opts.aiModel = cfg.aiModel;
     if (cfg.defaultBravePages) store.opts.bravePages = cfg.defaultBravePages;
+    store.opts.qualityMode = cfg.qualityMode;
     saveStore();
     logAction('system_public_config_saved', JSON.stringify(cfg));
     status.style.color = 'var(--good)';
