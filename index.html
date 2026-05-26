@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515c">
+<link rel="stylesheet" href="style.css?v=20260515d">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -364,7 +364,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515c</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515d</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -763,6 +763,22 @@ service cloud.firestore {
   </div>
 </div>
 
+<div id="score-detail-modal" class="modal" hidden>
+  <div class="modal-content wide" style="max-width:900px;max-height:90vh;overflow:auto">
+    <h3 id="sd-company-name" style="margin-bottom:4px">会社名</h3>
+    <div id="sd-meta" class="muted" style="font-size:12px;margin-bottom:14px"></div>
+    <div id="sd-score-block" style="text-align:center;padding:16px;background:var(--bg);border-radius:8px;margin-bottom:16px">
+      <div style="font-size:48px;font-weight:700" id="sd-score-num">--</div>
+      <div style="font-size:12px;color:var(--muted)" id="sd-score-conf"></div>
+    </div>
+    <div id="sd-dimensions" style="margin-bottom:16px"></div>
+    <div id="sd-content"></div>
+    <div class="modal-actions">
+      <button id="sd-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div id="login-modal" class="modal" hidden>
   <div class="modal-content" style="max-width:420px">
     <h3 id="login-title">tell partner ログイン</h3>
@@ -835,9 +851,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515c"></script>
-<script type="module" src="firebase-sync.js?v=20260515c"></script>
-<script src="data/regions.js?v=20260515c"></script>
-<script src="app.js?v=20260515c"></script>
+<script src="firebase-config.js?v=20260515d"></script>
+<script type="module" src="firebase-sync.js?v=20260515d"></script>
+<script src="data/regions.js?v=20260515d"></script>
+<script src="app.js?v=20260515d"></script>
 </body>
 </html>

@@ -1104,7 +1104,7 @@ function renderRow(c) {
     : `<span class="phone-empty">未取得（HPから問い合わせ）</span>`;
   return `
     <tr class="${trClass}" data-id="${c.id}">
-      <td data-label="適合度"><span class="score ${scoreClass(c.score)}">${c.score}</span></td>
+      <td data-label="適合度"><span class="score ${scoreClass(c.score)} score-clickable" data-detail-id="${c.id}" title="クリックで評価詳細" style="cursor:pointer">${c.score}</span></td>
       <td data-label="操作">
         <div class="row-actions">
           <button class="act-save ${isSaved ? 'active' : ''}" title="保存">★</button>
@@ -2518,6 +2518,116 @@ function exportSaved() {
   logAction('csv_export_saved', `${rows.length}件`);
   saveStore();
   downloadFile(`tell-saved-${Date.now()}.csv`, toCsv(rows));
+}
+
+/* ============ スコア詳細モーダル ============ */
+function openScoreDetailModal(companyId) {
+  const c = findCompanyById(companyId) || state.scored.find(x => x.id === companyId);
+  if (!c) return;
+  const modal = document.getElementById('score-detail-modal');
+  document.getElementById('sd-company-name').textContent = c.name || '(名称不明)';
+  const metaParts = [];
+  if (c.houjin_bangou) metaParts.push(`法人番号: ${c.houjin_bangou}`);
+  if (c.address) metaParts.push(`📍 ${c.address}`);
+  else if (c.prefecture) metaParts.push(`📍 ${c.prefecture}${c.city||''}`);
+  if (c.phone) metaParts.push(`☎ ${c.phone}`);
+  if (c.industry) metaParts.push(`業種: ${c.industry}`);
+  if (c.employees) metaParts.push(`従業員: ${c.employees}名`);
+  document.getElementById('sd-meta').innerHTML = metaParts.join(' / ') +
+    (c.website ? ` <a href="${c.website}" target="_blank">🔗 HP</a>` : '');
+
+  document.getElementById('sd-score-num').textContent = c.score || '--';
+  document.getElementById('sd-score-num').className = scoreClass(c.score);
+  const conf = c.ai_confidence ? `確信度: ${({low:'低',medium:'中',high:'高'}[c.ai_confidence]||c.ai_confidence)}` : '';
+  const usedDeep = c._used_deep_eval ? ' / 🧠 Opus深評価' : '';
+  const reranked = c._reranked ? ' / 🏆 リランキング適用' : '';
+  document.getElementById('sd-score-conf').textContent = `${conf}${usedDeep}${reranked}`;
+
+  // Dimensions barchart
+  let dimHtml = '';
+  if (c.ai_dimensions) {
+    const d = c.ai_dimensions;
+    const items = [
+      ['region_match', '地域マッチ'],
+      ['industry_match', '業種マッチ'],
+      ['size_match', '規模マッチ'],
+      ['timing_signal', 'タイミング'],
+      ['evidence_strength', '根拠強度'],
+      ['pain_alignment', '課題合致'],
+    ];
+    dimHtml = '<h4>📊 スコア内訳</h4><div style="display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:12px">';
+    for (const [k, label] of items) {
+      const v = d[k] || 0;
+      const color = v >= 70 ? 'var(--good)' : v >= 40 ? 'var(--mid)' : 'var(--danger)';
+      dimHtml += `
+        <span>${label}</span>
+        <div style="background:var(--bg);border-radius:4px;height:12px;overflow:hidden">
+          <div style="width:${v}%;height:100%;background:${color}"></div>
+        </div>
+        <span style="font-weight:600;color:${color};min-width:35px">${v}</span>`;
+    }
+    dimHtml += '</div>';
+  }
+  document.getElementById('sd-dimensions').innerHTML = dimHtml;
+
+  // Detail sections
+  const sections = [];
+  if (c.is_competitor) {
+    sections.push(`<div style="background:rgba(220,0,0,.08);padding:12px;border-radius:6px;border-left:3px solid var(--danger);margin-bottom:12px"><strong style="color:var(--danger)">⛔ 競合企業</strong><br><small>${c.competitor_evidence || '同種商材を販売中'}</small></div>`);
+  }
+  if (c.ai_fit_evidence) {
+    sections.push(`<h4>💡 適合根拠</h4><p>${c.ai_fit_evidence}</p>`);
+  }
+  if (Array.isArray(c.ai_fit_citations) && c.ai_fit_citations.length > 0) {
+    sections.push('<h4>📚 HPからの引用 (根拠)</h4><ul style="font-size:13px">' +
+      c.ai_fit_citations.map(ct => `<li><strong>「${ct.quote||''}」</strong><br><small style="color:var(--muted)">→ ${ct.why||''}</small></li>`).join('') + '</ul>');
+  }
+  if (Array.isArray(c.ai_buying_signals) && c.ai_buying_signals.length > 0) {
+    sections.push('<h4>🎯 購買シグナル</h4><div style="display:flex;flex-wrap:wrap;gap:6px">' +
+      c.ai_buying_signals.map(s => `<span class="meta-tag good">${s}</span>`).join('') + '</div>');
+  }
+  if (Array.isArray(c.ai_talking_points) && c.ai_talking_points.length > 0) {
+    sections.push('<h4>📞 架電トピック</h4><ol style="font-size:13px">' +
+      c.ai_talking_points.map(t => `<li>${t}</li>`).join('') + '</ol>');
+  }
+  if (Array.isArray(c.ai_decision_makers) && c.ai_decision_makers.length > 0) {
+    sections.push('<h4>👤 決裁者候補</h4><ul style="font-size:13px">' +
+      c.ai_decision_makers.map(d => `<li>${d.title || ''}${d.name ? ': ' + d.name : ''}</li>`).join('') + '</ul>');
+  }
+  if (Array.isArray(c.ai_risks) && c.ai_risks.length > 0) {
+    sections.push('<h4>⚠ リスク</h4><ul style="font-size:13px;color:var(--mid)">' +
+      c.ai_risks.map(r => `<li>${r}</li>`).join('') + '</ul>');
+  }
+  if (c.activeness) {
+    const actLabel = { active: '✓ アクティブ', maybe_active: '◯ おそらく活動中', inactive: '⚠ 活動停止シグナル検出', unknown: '? 不明' }[c.activeness];
+    sections.push(`<h4>⚡ 活動性</h4><p>${actLabel} / シグナル: ${(c.activeness_signals||[]).join('、') || 'なし'}</p>`);
+  }
+  if (typeof c.credibility_score === 'number') {
+    sections.push(`<h4>🛡 HP信頼性</h4><p>スコア: ${c.credibility_score}/100<br><small style="color:var(--muted)">${(c.credibility_signals||[]).join('、')}</small></p>`);
+  }
+  if (c.official_address) {
+    sections.push(`<h4>🆔 国税庁登記情報</h4><p>正式名: ${c.official_name || c.name}<br>本店所在地: ${c.official_address}<br>法人番号: ${c.houjin_bangou}</p>`);
+  }
+  if (c.ai_score_pre_rerank && c.ai_score_pre_rerank !== c.ai_score) {
+    sections.push(`<h4>🏆 リランキング</h4><p>個別評価: ${c.ai_score_pre_rerank}点 → リランキング後: ${c.ai_score}点<br><small>${c.ai_rerank_reason || ''}</small></p>`);
+  }
+  document.getElementById('sd-content').innerHTML = sections.join('');
+  modal.hidden = false;
+}
+
+function setupScoreDetailModal() {
+  const modal = document.getElementById('score-detail-modal');
+  if (!modal) return;
+  document.getElementById('sd-close').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+  // 結果テーブルのスコアクリックで開く (イベント委譲)
+  document.body.addEventListener('click', e => {
+    const t = e.target.closest('.score-clickable');
+    if (t) {
+      const id = parseInt(t.dataset.detailId, 10);
+      if (id) openScoreDetailModal(id);
+    }
+  });
 }
 
 /* ============ 利用規約モーダル ============ */
@@ -3935,6 +4045,14 @@ async function enrichCompanyDeep(c, productText) {
   // Phase1: 優先4URLを並列フェッチ
   const phase1 = await Promise.all(priorityUrls.map(u => fetchPageViaProxy(u).catch(() => null)));
   phase1.forEach((html, i) => mergeFromHTML(html, priorityUrls[i]));
+  // 信頼性シグナル: 最初に取れたHTMLで判定
+  const firstHtml = phase1.find(h => h);
+  if (firstHtml) {
+    const credText = htmlToText(firstHtml).slice(0, 3000);
+    const cred = detectCredibilitySignals(firstHtml, credText);
+    best.credibility_score = cred.score;
+    best.credibility_signals = cred.signals;
+  }
 
   // Phase2: 必要なら残りも並列フェッチ
   if (!enough()) {
@@ -3977,6 +4095,14 @@ async function enrichCompanyDeep(c, productText) {
       best.competitor_evidence = ai.competitor_evidence;
       best.ai_dimensions = ai.dimensions || null;
       best.ai_talking_points = ai.talking_points || [];
+      best.ai_decision_makers = ai.decision_makers || [];
+      if (typeof ai.employees_estimate === 'number' && ai.employees_estimate > 0) {
+        best.employees = ai.employees_estimate;
+        // size カテゴリも自動推定
+        if (ai.employees_estimate <= 50) best.size = 'small';
+        else if (ai.employees_estimate <= 300) best.size = 'mid';
+        else best.size = 'large';
+      }
       // 業種を HP から再分類した結果で上書き(あれば)
       if (ai.actual_industry && (!best.industry || best.industry === '不明')) {
         best.industry = ai.actual_industry;
@@ -4345,6 +4471,8 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
       is_competitor: stage3.is_competitor,
       competitor_evidence: stage3.competitor_evidence,
       actual_industry: stage3.actual_industry,
+      decision_makers: stage3.decision_makers,
+      employees_estimate: stage3.employees_estimate,
       dimensions: stage3.dimensions,
       talking_points: stage3.talking_points,
       _used_deep_eval: true,
@@ -4492,6 +4620,35 @@ JSONのみで返答:
   }
 }
 
+// HP の信頼性シグナル (法人 vs スパム/個人サイトの区別)
+function detectCredibilitySignals(html, hpText) {
+  if (!html) return { score: 0, signals: [] };
+  const signals = [];
+  let score = 0;
+  // SSL証明書 (https) - 既に website が https なら +1
+  // og:image / og:title (OGP対応) → 法人サイトの確率高
+  if (/<meta[^>]+property=["']og:image["']/i.test(html)) { signals.push('ogp_image'); score += 5; }
+  if (/<meta[^>]+property=["']og:title["']/i.test(html)) { signals.push('ogp_title'); score += 5; }
+  // favicon
+  if (/<link[^>]+rel=["'](?:icon|shortcut icon)["']/i.test(html)) { signals.push('favicon'); score += 3; }
+  // 言語切替メニュー(英語版あるなら本格的)
+  if (/(English|EN|en\/|\/en\/|\/lang\/en)/.test(html)) { signals.push('multilingual'); score += 5; }
+  // プライバシーポリシー / 特商法 / 会社概要 リンク(法人HPの定番)
+  if (/(プライバシーポリシー|個人情報保護方針|privacy.?policy)/i.test(hpText)) { signals.push('privacy_policy'); score += 10; }
+  if (/(特定商取引法|特商法)/i.test(hpText)) { signals.push('tokushoho'); score += 10; }
+  if (/(会社概要|企業情報|会社案内|company\s*info)/i.test(hpText)) { signals.push('company_info'); score += 8; }
+  // 採用情報(継続経営の証)
+  if (/(採用情報|新卒採用|中途採用|career|recruit)/i.test(hpText)) { signals.push('hiring_page'); score += 5; }
+  // SNSリンク
+  const snsCount = (hpText.match(/(twitter\.com|facebook\.com|linkedin\.com|youtube\.com|instagram\.com)/gi) || []).length;
+  if (snsCount >= 2) { signals.push(`sns:${snsCount}`); score += 5; }
+  // CMS識別子 (WordPress/Wix等 = 個人サイト寄り、自社開発 = 法人寄り)
+  if (/wp-content|wordpress/i.test(html)) signals.push('cms_wordpress');
+  if (/wix\.com|squarespace/i.test(html)) { signals.push('cms_consumer'); score -= 5; }
+
+  return { score: Math.max(0, Math.min(100, score)), signals };
+}
+
 // HPテキストから「会社が活動中か」を推定するシグナル抽出
 // - 最近の日付言及があるか
 // - ブログ/ニュースの直近更新
@@ -4591,7 +4748,10 @@ ${(hpText || '').slice(0, 6000)}
 
 8. is_competitor (T/F): 評価対象が、商材と類似のサービス/製品を販売している会社なら true
 9. competitor_evidence: is_competitor=true の場合、その根拠引用 (なければ null)
-10. dimensions: スコアの内訳 (透明性のため):
+10. decision_makers: HPから読み取れる決裁者名や役職 (社長/代表取締役/部長等)。配列形式
+    例: [{"name": "山田太郎", "title": "代表取締役社長"}, {"title": "情報システム部 部長"}]
+11. employees_estimate: HPテキストから推定される従業員規模 (数値, 不明ならnull)
+12. dimensions: スコアの内訳 (透明性のため):
     - region_match: 0-100 (本社が選択地域内なら100、周辺県80、別地域0)
     - industry_match: 0-100 (商材ターゲット業種に直結なら100)
     - size_match: 0-100 (商材想定規模に合うなら100)
@@ -4608,6 +4768,8 @@ ${(hpText || '').slice(0, 6000)}
   "is_competitor": true|false,
   "competitor_evidence": "競合の場合の根拠引用 or null",
   "actual_industry": "HPから判明した実際の業種(暫定業種より優先)",
+  "decision_makers": [{"name": "山田太郎 or null", "title": "代表取締役 or 部署名"}],
+  "employees_estimate": 数値 or null,
   "fit_evidence": "30字以内の要約",
   "fit_citations": [
     {"quote": "HPテキストからの直接引用", "why": "なぜ商材適合のシグナルか"}
@@ -4667,6 +4829,8 @@ ${(hpText || '').slice(0, 6000)}
       is_competitor: lastJson.is_competitor === true,
       competitor_evidence: lastJson.competitor_evidence || null,
       actual_industry: lastJson.actual_industry || null,
+      decision_makers: Array.isArray(lastJson.decision_makers) ? lastJson.decision_makers.slice(0, 5) : [],
+      employees_estimate: typeof lastJson.employees_estimate === 'number' ? lastJson.employees_estimate : null,
       fit_evidence: lastJson.fit_evidence || null,
       fit_citations: Array.isArray(lastJson.fit_citations) ? lastJson.fit_citations.slice(0, 5) : [],
       buying_signals: Array.isArray(lastJson.buying_signals) ? lastJson.buying_signals.slice(0, 6) : [],
@@ -5155,6 +5319,7 @@ async function init() {
   setupAdminPanel();
   setupBillingReportModal();
   setupMasterAdminModal();
+  setupScoreDetailModal();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {
