@@ -2640,23 +2640,42 @@ function rootDomain(url) {
 }
 function generateFilteredQueries(productText, icp, filters, round = 0) {
   const queries = [];
-  const { industry, prefecture, city } = filters || {};
+  const { industry } = filters || {};
+  // 後方互換: prefecture/city が単一でも、prefectures/cities[] でも受け取れる
+  const prefectures = Array.isArray(filters?.prefectures) ? filters.prefectures
+    : (filters?.prefecture ? [filters.prefecture] : []);
+  const cities = Array.isArray(filters?.cities) ? filters.cities
+    : (filters?.city ? [filters.city] : []);
   const CORP_KWS = [
     '株式会社 会社概要', '中小企業 会社概要', '採用情報 株式会社', '代表電話',
-    '会社案内 法人', '事業内容 株式会社',
+    '会社案内 法人', '事業内容 株式会社', '事業所 一覧', '工場 案内', '沿革 設立',
   ];
   const targetIndustries = industry ? [industry] : (icp?.industries || []).slice(0, 4);
-  for (const ind of targetIndustries) {
-    const parts = [ind];
-    if (prefecture) parts.push(prefecture);
-    if (city && city !== prefecture) parts.push(city);
-    parts.push(CORP_KWS[round % CORP_KWS.length]);
-    queries.push(parts.join(' '));
-    if (prefecture || city) {
-      queries.push(`${ind} ${prefecture||''}${city ? ' ' + city : ''} 株式会社`.trim());
+  const kw = CORP_KWS[round % CORP_KWS.length];
+
+  // 地域単位 × 業種単位でクエリ生成 (掛け算で網羅)
+  // 1) 市区町村が指定されていればそれぞれを使う
+  const targetCityKeys = cities.length > 0 ? cities : prefectures;
+  if (targetCityKeys.length === 0) {
+    // 地域指定なし(業種だけ): 既存ロジック
+    for (const ind of targetIndustries) {
+      queries.push(`${ind} ${kw}`);
+      queries.push(`${ind} 株式会社 会社概要`);
+    }
+  } else {
+    for (const ind of targetIndustries) {
+      for (const key of targetCityKeys) {
+        // key は "東京都" もしくは "東京都/港区" の形式
+        const [pref, city] = key.includes('/') ? key.split('/') : [key, ''];
+        const locStr = city ? `${pref} ${city}` : pref;
+        queries.push(`${ind} ${locStr} ${kw}`);
+        // 別のキーワードでもう1本(網羅性UP)
+        const altKw = CORP_KWS[(round + 1) % CORP_KWS.length];
+        if (altKw !== kw) queries.push(`${ind} ${locStr} ${altKw}`);
+      }
     }
   }
-  return [...new Set(queries.filter(q => q.trim()))].slice(0, 10);
+  return [...new Set(queries.filter(q => q.trim()))];
 }
 
 const ARTICLE_KEYWORDS = [
@@ -3929,22 +3948,23 @@ async function runPipeline(input, options = {}) {
     // 絞り込み条件を取得→クエリに反映(地域選択優先)
     const prefList = [...selectedPrefs()];
     const cityList = [...selectedCities()];
-    const firstPref = prefList[0] || (cityList[0] || '').split('/')[0] || '';
-    const firstCity = (cityList[0] || '').split('/')[1] || '';
     const preFilters = {
       industry: document.getElementById('filter-industry').value,
-      prefecture: firstPref,
-      city: firstCity,
+      prefectures: prefList,
+      cities: cityList,
     };
     const hasPreFilter = preFilters.industry || prefList.length > 0 || cityList.length > 0;
+    const totalRegions = (cityList.length > 0 ? cityList.length : prefList.length);
     progEl.textContent = hasPreFilter
       ? `絞り込み条件(${[preFilters.industry, prefList.length>0?prefList.join('・')+'全域':'', cityList.length>0?cityList.length+'市区':''].filter(Boolean).join('・')})で検索中…`
       : '商材を分析してターゲット企業を検索中…';
     const customQueries = hasPreFilter ? generateFilteredQueries(input, state.icp, preFilters, 0) : null;
+    // 地域数 × 業種数 ぶんのクエリを実行(最大30本までで安全弁)
+    const maxQs = customQueries ? Math.min(30, Math.max(10, customQueries.length)) : 10;
     try {
       const found = await discoverFromBrave(input, state.icp, msg => {
         progEl.textContent = msg;
-      }, customQueries ? { queries: customQueries, maxQueries: 10 } : {});
+      }, customQueries ? { queries: customQueries, maxQueries: maxQs } : {});
       progEl.classList.add('done');
       progEl.textContent = `✓ ${found.length}社の新規企業を発見しました${found.length === 0 ? '（既存と重複した可能性あり）' : ''}`;
     } catch (e) {
@@ -4009,15 +4029,13 @@ async function refineSearch() {
   if (!state.icp) { alert('先に商材を分析してください'); return; }
   const prefList = [...selectedPrefs()];
   const cityList = [...selectedCities()];
-  const firstPref = prefList[0] || (cityList[0] || '').split('/')[0] || '';
-  const firstCity = (cityList[0] || '').split('/')[1] || '';
   const filters = {
     industry: document.getElementById('filter-industry').value,
-    prefecture: firstPref,
-    city: firstCity,
+    prefectures: prefList,
+    cities: cityList,
     size: document.getElementById('filter-size').value,
   };
-  if (!filters.industry && !filters.prefecture && !filters.city) {
+  if (!filters.industry && prefList.length === 0 && cityList.length === 0) {
     alert('業種・地域のいずれかを指定してください');
     return;
   }
