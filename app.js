@@ -2864,6 +2864,37 @@ function extractPhoneFromText(text) {
 function selectedPrefs() { return new Set(store.opts.regionPrefs || []); }
 function selectedCities() { return new Set(store.opts.regionCities || []); }
 
+// HPから抽出した本社所在地が、ユーザー選択地域と一致するかチェック
+// - 地域未選択 → 常にtrue
+// - 都道府県選択あり → companyのprefectureが含まれるならOK
+// - 市区町村選択あり → company の prefecture/city が cities[] に含まれるか、
+//   または該当都道府県の任意の市にいればOK(緩めの判定)
+// - 本社所在地が未抽出 → falseで除外(地域絞り込みしているなら所在不明は信頼しない)
+function isRegionMismatch(company) {
+  const prefs = selectedPrefs();
+  const cities = selectedCities();
+  // 地域指定なし → ミスマッチではない
+  if (prefs.size === 0 && cities.size === 0) return false;
+  // AI が「対象地域外」と明示的に判定したら除外
+  if (company._ai_region_reject === true || company.ai_in_target_region === false) return true;
+  // 本社所在地が抽出できていない → 地域絞り込み時は除外(精度優先)
+  if (!company.prefecture) return true;
+  // 都道府県選択: そこに含まれる
+  if (prefs.size > 0 && prefs.has(company.prefecture)) return false;
+  // 市区町村選択: 厳密一致
+  if (cities.size > 0) {
+    const key = `${company.prefecture}/${company.city || ''}`;
+    if (cities.has(key)) return false;
+    // city未抽出なら、都道府県だけでも一致すれば暫定OK
+    if (!company.city) {
+      for (const c of cities) {
+        if (c.startsWith(company.prefecture + '/')) return false;
+      }
+    }
+  }
+  return true;
+}
+
 function renderRegionChips() {
   const el = document.getElementById('region-chips');
   if (!el) return;
@@ -3200,12 +3231,79 @@ function extractFromHTML(html, baseUrl) {
     try { out.contact_url = new URL(contactM[1], baseUrl).href; } catch {}
   }
 
-  // 都道府県
-  for (const p of JP_PREFS) {
-    if (html.includes(p)) { out.prefecture = p; break; }
+  // 本社所在地: 〒+住所パターンを優先、本社/所在地キーワード近傍を重視
+  // この方法だと「サービス対象エリア」「店舗一覧」等で言及される他県名と区別できる
+  const flatTextForAddr = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+  const addr = extractHeadquartersAddress(flatTextForAddr);
+  if (addr) {
+    if (addr.prefecture) out.prefecture = addr.prefecture;
+    if (addr.city) out.city = addr.city;
+    if (addr.zip) out.zip = addr.zip;
+    out.address = addr.address;
+  } else {
+    // フォールバック: 都道府県名がHPに出てくれば採用(精度低)
+    for (const p of JP_PREFS) {
+      if (html.includes(p)) { out.prefecture = p; break; }
+    }
   }
 
   return out;
+}
+
+// 本社所在地を抽出
+// 優先順位:
+//  1. 「本社」「所在地」「Head Office」等のキーワード直後の住所
+//  2. 〒XXX-XXXX 形式が含まれる住所
+//  3. フッター/会社概要っぽい部分の住所
+function extractHeadquartersAddress(text) {
+  if (!text) return null;
+  const PREFS_RE = JP_PREFS.join('|');
+  // 〒XXX-XXXX 都道府県... 形式
+  const zipPattern = new RegExp(`〒?\\s*(\\d{3})[-－]?(\\d{4})\\s*(${PREFS_RE})([^\\s,。]{2,40})`, 'g');
+  // 「本社」「所在地」等の直後 (40文字以内)
+  const HQ_KW = '(本社|本店|所在地|住所|Address|Head\\s*Office|Headquarters|HQ)';
+  const hqNearPattern = new RegExp(`${HQ_KW}[\\s\\S]{0,40}?(${PREFS_RE})([^\\s,。]{2,30})`, 'g');
+
+  const candidates = [];
+  let m;
+  // パターン1: HQキーワード + 住所 (最強)
+  while ((m = hqNearPattern.exec(text)) !== null) {
+    const pref = m[2];
+    const rest = m[3];
+    const city = extractCityFromAddress(pref, rest);
+    candidates.push({ prefecture: pref, city, address: `${pref}${rest}`.slice(0, 60), score: 100 });
+  }
+  // パターン2: 〒+住所 (郵便番号が付いていれば公式住所の可能性高)
+  while ((m = zipPattern.exec(text)) !== null) {
+    const pref = m[3];
+    const rest = m[4];
+    const city = extractCityFromAddress(pref, rest);
+    const zip = `${m[1]}-${m[2]}`;
+    candidates.push({ prefecture: pref, city, address: `〒${zip} ${pref}${rest}`.slice(0, 60), zip, score: 80 });
+  }
+  if (candidates.length === 0) return null;
+  // スコア順, 同点なら最初の出現を優先
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
+}
+
+function extractCityFromAddress(prefecture, addressTail) {
+  if (!addressTail || !window.JAPAN_REGIONS) return '';
+  const cities = window.JAPAN_REGIONS[prefecture] || [];
+  for (const c of cities) {
+    if (addressTail.startsWith(c)) return c;
+  }
+  // 東京23区フォールバック
+  const wardM = addressTail.match(/^(.{2,5}区)/);
+  if (wardM && prefecture === '東京都') return wardM[1];
+  // 市町村のフォールバック
+  const cityM = addressTail.match(/^(.{2,8}(?:市|町|村))/);
+  if (cityM) return cityM[1];
+  return '';
 }
 
 
@@ -3323,22 +3421,25 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
         c.pending = false;
         const aiSaysNotCompany = c.ai_is_company === false;
         const aiSaysNameInvalid = c.ai_name_valid === false;
-        const passesRule = !aiSaysNotCompany && !aiSaysNameInvalid && isLikelyRealCompany(c);
+        const regionMismatch = isRegionMismatch(c);
+        const passesRule = !aiSaysNotCompany && !aiSaysNameInvalid && !regionMismatch && isLikelyRealCompany(c);
         if (passesRule) {
           found.push(c);
           totalValidated++;
           saveStoreSoon();
           rescore();
           const phoneTag = c.phone ? ` ☎${c.phone}` : ' ☎未取得';
-          onProgress?.(`✓ ${c.name.slice(0,30)}${phoneTag} (累計${totalValidated}社)`);
+          const locTag = c.prefecture ? ` 📍${c.prefecture}${c.city||''}` : '';
+          onProgress?.(`✓ ${c.name.slice(0,28)}${phoneTag}${locTag} (累計${totalValidated}社)`);
         } else {
           store.importedCompanies = store.importedCompanies.filter(x => x.id !== c.id);
           saveStoreSoon();
           rescore();
           const reason = aiSaysNotCompany ? 'AI判定で非法人'
             : aiSaysNameInvalid ? 'AI判定で会社名が無効'
+            : regionMismatch ? `本社が選択地域外(${c.prefecture||'不明'}${c.city||''})`
             : '非法人';
-          onProgress?.(`× ${c.name.slice(0,30)} ${reason}として除外`);
+          onProgress?.(`× ${c.name.slice(0,28)} ${reason}として除外`);
         }
         processed++;
       }
@@ -3410,9 +3511,18 @@ async function enrichCompanyDeep(c, productText) {
     }
     if (ext.phone && !best.phone) best.phone = ext.phone;
     if (ext.contact_url && !best.contact_url) best.contact_url = ext.contact_url;
-    if (ext.prefecture && !best.prefecture) best.prefecture = ext.prefecture;
+    // 住所: より精度の高いソース(zipありなど)を優先
+    if (ext.address && !best.address) {
+      best.address = ext.address;
+      if (ext.prefecture) best.prefecture = ext.prefecture;
+      if (ext.city) best.city = ext.city;
+      if (ext.zip) best.zip = ext.zip;
+    } else if (ext.prefecture && !best.prefecture) {
+      best.prefecture = ext.prefecture;
+      if (ext.city) best.city = ext.city;
+    }
   };
-  const enough = () => best.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(best.name) && best.phone && best.prefecture;
+  const enough = () => best.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人)/.test(best.name) && best.phone && best.address;
 
   // Phase1: 優先4URLを並列フェッチ
   const phase1 = await Promise.all(priorityUrls.map(u => fetchPageViaProxy(u).catch(() => null)));
@@ -3434,21 +3544,31 @@ async function enrichCompanyDeep(c, productText) {
       best.ai_score = ai.score;
       best.ai_reasoning = ai.reasoning;
       best.ai_fit = ai.fit;
+      best.ai_fit_evidence = ai.fit_evidence;
       best.ai_is_company = ai.is_company;
       best.ai_name_valid = ai.name_valid;
       best.ai_phone_valid = ai.phone_valid;
+      best.ai_in_target_region = ai.in_target_region;
       // 会社名: AIが妥当な名前を返した場合のみ採用
       if (ai.name && ai.name.length >= 3 && ai.name_valid) {
         best.name = cleanCompanyName(ai.name);
+      }
+      // 本社所在地: AIの判定で上書き(AI は本社/サービス対象を区別できる)
+      if (ai.hq_prefecture) {
+        best.prefecture = ai.hq_prefecture;
+        if (ai.hq_city) best.city = ai.hq_city;
       }
       // 電話番号: AIが phone_valid=true で番号を返したらそれを採用
       // phone_valid=false なら regex で取った番号も信用できないので破棄
       if (ai.phone && ai.phone_valid) {
         best.phone = ai.phone;
       } else if (!ai.phone_valid && best.phone) {
-        // 既存の電話番号がAIに棄却された場合
         best.phone_rejected = best.phone;
         best.phone = '';
+      }
+      // AI が「対象地域外」と判定したらフラグ(isRegionMismatchが拾う)
+      if (ai.in_target_region === false) {
+        best._ai_region_reject = true;
       }
     }
   }
@@ -3676,29 +3796,54 @@ async function batchScoreExisting(productText, onProgress) {
 
 async function aiScoreCompany(company, productText, hpText) {
   if (!store.opts.aiKey && !store.opts.braveProxy) return null;
-  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから適合度を評価してください。会社名と電話番号の真偽もT/Fで判定してください。JSONのみで返答。`;
+  const selectedRegionsHint = (() => {
+    const prefs = [...selectedPrefs()];
+    const cities = [...selectedCities()];
+    if (cities.length > 0) return `ユーザー選択地域: ${cities.slice(0,8).join('・')}`;
+    if (prefs.length > 0) return `ユーザー選択地域: ${prefs.slice(0,8).join('・')}`;
+    return '地域指定なし';
+  })();
+  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから商材適合度を「厳しく」評価してください。なんとなく当てはまりそう、ではなく、HPテキストから購買可能性の根拠を読み取れる時のみ高スコアを付けてください。JSONのみで返答。`;
   const prompt = `商材: ${productText}
+
+${selectedRegionsHint}
 
 企業情報:
 - 会社名(暫定): ${company.name}
 - URL: ${company.source_url || company.website || ''}
 - 業種: ${company.industry || '不明'}
-- 所在地: ${company.prefecture || ''} ${company.city || ''}
+- HPから抽出した所在地: ${company.address || (company.prefecture || '') + (company.city || '') || '不明'}
 - 抽出済み電話(暫定): ${company.phone || '未取得'}
 - HP説明: ${(company.description || '').slice(0, 200)}
 - HPテキスト抜粋: ${(hpText || '').slice(0, 1800)}
 
 判定項目:
-1. is_company (T/F): HPを持つ実在の法人/店舗/事務所なら true(寛容)。明らかにfalseにすべきは: 解説/比較記事「○○とは」「ランキング」「選び方」、求人ポータル、業者一覧、Wikipedia等のみ
-2. name: HPから判明する正式な事業者名。可能なら法人格(株式会社/合同会社等)を含める。判別不能ならnull
-3. name_valid (T/F): 上のnameが実在する固有名詞として妥当か。「ホーム」「TOP」「お知らせ」「公式サイト」のようなページタイトル断片や、形容詞だけ・サービス名だけはfalse
-4. phone: HPテキスト内に明示されている法人代表電話番号。複数あれば「代表」「お問い合わせ」「TEL」の直後を最優先。${store.opts.landlineOnly !== false ? '【重要】個人携帯(070/080/090)は除外し、固定電話(0X-XXXX-XXXX)/フリーダイヤル(0120/0800)のみ抽出' : '固定電話・携帯・フリーダイヤル可'}。FAXは除外。見つからなければnull
-5. phone_valid (T/F): 上のphoneがその事業者本物の代表連絡先として妥当か。FAX/個人携帯(landline only時)/別会社の番号/明らかな広告掲載番号はfalse
-6. score (0-100): 適合度(80+/60-79/40-59/20-39/0-19)
-7. reasoning: 30字以内の根拠
+1. is_company (T/F): HPを持つ実在の法人/店舗/事務所なら true(寛容)。falseにすべきは: 解説/比較記事/ランキング、求人ポータル、業者一覧、Wikipedia等
+
+2. name: HPから判明する正式な事業者名(法人格含む)。判別不能ならnull
+
+3. name_valid (T/F): nameが実在固有名詞として妥当か。「ホーム」「TOP」等の断片はfalse
+
+4. hq_prefecture: 本社所在地の都道府県(HPテキストの「本社」「所在地」「〒」近傍から判定)。本社が判明しない場合はnull。サービス対象エリアの記載は本社ではない
+5. hq_city: 本社所在地の市区町村。判別不能ならnull
+6. in_target_region (T/F): 本社所在地が【ユーザー選択地域】に含まれるか。地域指定なしの場合は true。本社不明 or 別地域 ならfalse
+
+7. phone: HPテキスト内の法人代表電話番号。「代表」「お問い合わせ」「TEL」直後を最優先。${store.opts.landlineOnly !== false ? '【必須】個人携帯(070/080/090)は除外し、固定電話/0120/0800のみ' : '固定/携帯/フリーダイヤル可'}。FAX除外。見つからなければnull
+8. phone_valid (T/F): phoneが本物の代表連絡先か
+
+9. fit_evidence: 商材を必要としそうな具体的根拠(30字以内、HPテキストから引用ベース推奨)。根拠がなければ null
+10. score (0-100): 商材適合度。【厳しく】評価:
+    - 90-100: HPに明示的なニーズ言及や類似商材を既に使ってる証拠あり
+    - 70-89: 業種・規模から購買可能性が極めて高い + 何らかのシグナル
+    - 50-69: 業種マッチで一般論として可能性あり
+    - 30-49: 業種が周辺、買う可能性は限定的
+    - 0-29: ほぼ買わない or 判断材料不足
+    fit_evidence が null なら 50 を超えないこと
+
+11. reasoning: 30字以内の総合評価
 
 JSONのみ返答:
-{"is_company": true|false, "name": "株式会社XXX or null", "name_valid": true|false, "phone": "03-1234-5678 or null", "phone_valid": true|false, "score": 0-100, "reasoning": "..."}`;
+{"is_company": true|false, "name": "株式会社XXX or null", "name_valid": true|false, "hq_prefecture": "東京都 or null", "hq_city": "港区 or null", "in_target_region": true|false, "phone": "03-1234-5678 or null", "phone_valid": true|false, "fit_evidence": "...or null", "score": 0-100, "reasoning": "..."}`;
   try {
     const text = await callClaude({ system: sys, prompt, max_tokens: 500 });
     incrementUsage('ai', 1);
@@ -3717,8 +3862,12 @@ JSONのみ返答:
       is_company: obj.is_company !== false,
       name: obj.name || null,
       name_valid: obj.name_valid !== false,
+      hq_prefecture: obj.hq_prefecture || null,
+      hq_city: obj.hq_city || null,
+      in_target_region: obj.in_target_region !== false,
       phone,
       phone_valid: phoneValid,
+      fit_evidence: obj.fit_evidence || null,
       score: Math.max(0, Math.min(100, parseInt(obj.score, 10) || 0)),
       reasoning: obj.reasoning || '',
       fit: obj.fit || 'mid',
