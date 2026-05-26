@@ -1115,6 +1115,8 @@ function renderRow(c) {
           <button class="act-contact" data-url="${urls.contact}" title="お問い合わせ">✉️</button>
           <button class="act-note ${hasNote ? 'active' : ''}" title="メモ">📝</button>
           <button class="act-script" title="スクリプト">📜</button>
+          <button class="act-fb-good ${(store.feedback?.[c.id]?.rating === 'good') ? 'active' : ''}" title="この評価は正しい (AI改善に使う)" data-fb="good">👍</button>
+          <button class="act-fb-bad ${(store.feedback?.[c.id]?.rating === 'bad') ? 'active' : ''}" title="この評価は間違っている (AI改善に使う)" data-fb="bad">👎</button>
         </div>
       </td>
       <td data-label="会社名">
@@ -1166,6 +1168,20 @@ function bindRowActions() {
     });
     tr.querySelector('.act-note').addEventListener('click', () => openNote(id));
     tr.querySelector('.act-script').addEventListener('click', () => openScript(company));
+    const fbGood = tr.querySelector('.act-fb-good');
+    const fbBad = tr.querySelector('.act-fb-bad');
+    if (fbGood) fbGood.addEventListener('click', () => {
+      const cur = store.feedback?.[id]?.rating;
+      recordFeedback(id, cur === 'good' ? null : 'good');
+    });
+    if (fbBad) fbBad.addEventListener('click', () => {
+      const cur = store.feedback?.[id]?.rating;
+      if (cur === 'bad') { recordFeedback(id, null); return; }
+      const correction = prompt('正しい適合度スコア(0-100)を入力してください (キャンセルで補正なし):', '');
+      const correctionNum = correction === null ? null : parseInt(correction, 10);
+      const comment = prompt('修正のコメント(なぜ評価が間違ってると思うか):', '') || '';
+      recordFeedback(id, 'bad', isNaN(correctionNum) ? null : correctionNum, comment);
+    });
     tr.querySelector('.status-select').addEventListener('change', e => setStatus(id, e.target.value));
   });
 }
@@ -1201,7 +1217,8 @@ const store = {
   billingHistory: [],
   // 課金設定(管理者がFirestore経由で全ユーザー共通設定として変更可)
   billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [] },
+  feedback: {}, // companyId -> { rating: 'good'|'bad'|null, score_correction, comment, t }
 };
 
 function loadStore() {
@@ -1227,6 +1244,7 @@ function loadStore() {
     if (d.billing) store.billing = { ...store.billing, ...d.billing };
     if (Array.isArray(d.billingHistory)) store.billingHistory = d.billingHistory;
     if (d.billingConfig) store.billingConfig = d.billingConfig;
+    if (d.feedback) store.feedback = d.feedback;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1269,6 +1287,7 @@ function _saveStoreImpl() {
     billing: store.billing,
     billingHistory: store.billingHistory || [],
     billingConfig: store.billingConfig,
+    feedback: store.feedback || {},
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -1776,6 +1795,7 @@ async function loadAndApplySystemConfig() {
       if (pub.aiModel) store.opts.aiModel = pub.aiModel;
       if (typeof pub.defaultBravePages === 'number') store.opts.bravePages = pub.defaultBravePages;
       if (typeof pub.qualityMode === 'boolean') store.opts.qualityMode = pub.qualityMode;
+      if (Array.isArray(pub.knownCompetitors)) store.opts.knownCompetitors = pub.knownCompetitors;
       if (pub.billingConfig) store.billingConfig = pub.billingConfig;
       // UIの値を反映
       const braveInput = document.getElementById('opt-brave-input');
@@ -1875,6 +1895,11 @@ async function openMasterAdmin() {
   setVal('ma-default-pages', (_systemPublicConfig && _systemPublicConfig.defaultBravePages) || 2);
   const qmEl = document.getElementById('ma-quality-mode');
   if (qmEl) qmEl.checked = (_systemPublicConfig?.qualityMode !== false) && (store.opts.qualityMode !== false);
+  const kcEl = document.getElementById('ma-known-competitors');
+  if (kcEl) {
+    const list = _systemPublicConfig?.knownCompetitors || store.opts.knownCompetitors || [];
+    kcEl.value = Array.isArray(list) ? list.join('\n') : '';
+  }
   // APIキー
   setVal('ma-anthropic-key', (_systemAdminConfig && _systemAdminConfig.anthropicKey) || '');
   setVal('ma-brave-key', (_systemAdminConfig && _systemAdminConfig.braveKey) || '');
@@ -1894,11 +1919,14 @@ async function openMasterAdmin() {
 async function saveConnectionConfig() {
   const status = document.getElementById('ma-conn-status');
   if (!window.firebaseApi) { status.textContent = 'Firebase未設定'; return; }
+  const competitorsText = document.getElementById('ma-known-competitors')?.value || '';
+  const competitors = competitorsText.split('\n').map(s => s.trim()).filter(Boolean);
   const cfg = {
     workerUrl: document.getElementById('ma-worker-url').value.trim(),
     aiModel: document.getElementById('ma-ai-model').value,
     defaultBravePages: parseInt(document.getElementById('ma-default-pages').value, 10) || 2,
     qualityMode: document.getElementById('ma-quality-mode').checked,
+    knownCompetitors: competitors,
     billingConfig: getBillingConfig(),
   };
   try {
@@ -1909,6 +1937,7 @@ async function saveConnectionConfig() {
     if (cfg.aiModel) store.opts.aiModel = cfg.aiModel;
     if (cfg.defaultBravePages) store.opts.bravePages = cfg.defaultBravePages;
     store.opts.qualityMode = cfg.qualityMode;
+    store.opts.knownCompetitors = cfg.knownCompetitors;
     saveStore();
     logAction('system_public_config_saved', JSON.stringify(cfg));
     status.style.color = 'var(--good)';
@@ -2629,6 +2658,41 @@ function renderQualitySummary(filteredList) {
   setText('qs-deep', list.filter(c => c._used_deep_eval).length);
   const avg = list.length > 0 ? Math.round(list.reduce((s, c) => s + (c.score||0), 0) / list.length) : 0;
   setText('qs-avg', avg);
+}
+
+/* ============ ユーザーフィードバック (AI 自己改善ループ) ============ */
+function recordFeedback(companyId, rating, scoreCorrection = null, comment = '') {
+  if (!store.feedback) store.feedback = {};
+  store.feedback[companyId] = { rating, score_correction: scoreCorrection, comment, t: Date.now() };
+  logAction(`feedback_${rating}`, companyId);
+  saveStore();
+  renderResults(); // バッジ更新
+}
+
+// 高品質フィードバック(👍/👎)を Few-shot Examples として AI prompt に注入
+// これにより次回以降の評価精度がユーザー特有の文脈に最適化される
+function buildFewShotFromFeedback(productText, limit = 3) {
+  if (!store.feedback) return '';
+  const fbEntries = Object.entries(store.feedback)
+    .filter(([id, fb]) => fb.rating && (fb.comment || fb.score_correction))
+    .map(([id, fb]) => ({ id: parseInt(id, 10), ...fb }))
+    .sort((a, b) => b.t - a.t)
+    .slice(0, limit);
+
+  if (fbEntries.length === 0) return '';
+
+  const lines = [];
+  lines.push('\n## ユーザーフィードバックからのキャリブレーション例');
+  lines.push('(過去にユーザーが正/誤と評価したケース。これらの判定基準を踏襲してください)');
+  for (const fb of fbEntries) {
+    const c = findCompanyById(fb.id);
+    if (!c) continue;
+    const judgment = fb.rating === 'good' ? '✓ 正しい評価' : '✗ 誤った評価';
+    const correction = fb.score_correction !== null ? `(正しいスコア: ${fb.score_correction})` : '';
+    const comment = fb.comment ? ` / ユーザーコメント: 「${fb.comment}」` : '';
+    lines.push(`- ${c.name} (${c.industry||'?'}) → AI評価${c.ai_score||'?'}点 ${judgment} ${correction}${comment}`);
+  }
+  return lines.join('\n') + '\n';
 }
 
 /* ============ スコア詳細モーダル ============ */
@@ -4823,6 +4887,10 @@ ${officialAddrLine}
 
 # HPテキスト全文(精読してください)
 ${(hpText || '').slice(0, 6000)}
+
+${buildFewShotFromFeedback(productText, 3)}
+${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
+  `\n## 管理者指定の競合企業リスト(これらに該当すれば is_competitor=true 強制)\n${store.opts.knownCompetitors.join('、')}\n` : ''}
 
 # 評価タスク
 1. HPテキストを精読し、商材を購入する具体的根拠(購買シグナル)を抽出してください

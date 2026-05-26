@@ -1043,6 +1043,10 @@ footer a { color: var(--accent); }
 .master-pane h4 { margin: 0 0 10px 0; font-size: 14px; font-weight: 600; }
 .master-pane[hidden] { display: none !important; }
 
+/* フィードバックボタン active 状態 */
+.act-fb-good.active { background: rgba(0,150,80,.2) !important; box-shadow: inset 0 0 0 1px var(--good); }
+.act-fb-bad.active { background: rgba(220,0,0,.2) !important; box-shadow: inset 0 0 0 1px var(--danger); }
+
 /* 品質サマリーパネル */
 .quality-summary {
   display: grid;
