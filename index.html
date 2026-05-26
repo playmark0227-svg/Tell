@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260514r">
+<link rel="stylesheet" href="style.css?v=20260514s">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -216,7 +216,52 @@
       <button class="side-btn" id="price-save" style="margin-top:8px">課金設定を保存</button>
       <div id="price-status" class="muted" style="font-size:11px;margin-top:4px"></div>
       <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
+      <button class="side-btn" id="open-billing-report">📊 全ユーザー請求額一覧を表示</button>
+      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
       <div style="font-size:11px;color:var(--muted)">※ 設定は全ユーザー共通で適用されます。<br>※ <code>firebase-config.js</code> の <code>ADMIN_EMAILS</code> に登録された<br>メールアドレスでのみ表示されます。</div>
+    </div>
+  </div>
+
+  <div id="billing-report-modal" class="modal" hidden>
+    <div class="modal-content wide" style="max-width:90vw">
+      <h3>📊 全ユーザー請求額一覧</h3>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <label>対象月:
+          <select id="report-month-filter" style="margin-left:6px"></select>
+        </label>
+        <button id="report-refresh">🔄 更新</button>
+        <button id="report-export-csv">📥 CSV出力(請求書作成用)</button>
+        <button id="report-export-csv-all">📥 全月CSV出力</button>
+        <div id="report-status" class="muted" style="font-size:12px;margin-left:auto"></div>
+      </div>
+      <div style="max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:6px">
+        <table id="report-table" style="width:100%;font-size:13px;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:var(--bg);z-index:1">
+            <tr style="border-bottom:2px solid var(--border)">
+              <th style="text-align:left;padding:6px">メールアドレス</th>
+              <th style="text-align:right;padding:6px">検索数</th>
+              <th style="text-align:right;padding:6px">AI評価</th>
+              <th style="text-align:right;padding:6px">HP取得</th>
+              <th style="text-align:right;padding:6px">基本</th>
+              <th style="text-align:right;padding:6px">従量</th>
+              <th style="text-align:right;padding:6px;color:var(--accent)">請求額</th>
+              <th style="text-align:right;padding:6px">最終更新</th>
+            </tr>
+          </thead>
+          <tbody id="report-tbody"></tbody>
+          <tfoot>
+            <tr style="border-top:2px solid var(--border);font-weight:600;background:var(--bg)">
+              <td style="padding:6px">合計</td>
+              <td colspan="5"></td>
+              <td style="text-align:right;padding:6px;color:var(--accent)" id="report-grand-total">¥0</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button id="report-close" class="ghost">閉じる</button>
+      </div>
     </div>
   </div>
 
@@ -631,9 +676,9 @@
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260514r"></script>
-<script type="module" src="firebase-sync.js?v=20260514r"></script>
-<script src="data/regions.js?v=20260514r"></script>
-<script src="app.js?v=20260514r"></script>
+<script src="firebase-config.js?v=20260514s"></script>
+<script type="module" src="firebase-sync.js?v=20260514s"></script>
+<script src="data/regions.js?v=20260514s"></script>
+<script src="app.js?v=20260514s"></script>
 </body>
 </html>

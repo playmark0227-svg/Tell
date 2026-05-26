@@ -9,7 +9,7 @@ import {
   signOut, sendPasswordResetEmail,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc,
+  getFirestore, doc, getDoc, setDoc, getDocs, collection,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
@@ -39,7 +39,16 @@ if (!cfg || /PLACEHOLDER/.test(cfg.apiKey || '')) {
         await setDoc(doc(db, 'user_state', uid), {
           ...data,
           _updatedAt: serverTimestamp(),
+          _email: (auth.currentUser && auth.currentUser.email) || data._email || '',
         }, { merge: false });
+      },
+      // 管理者用: 全ユーザーの user_state を一括取得
+      // 注: Firestore Rules で admin email を allow する必要あり
+      listAllUserStates: async () => {
+        const snap = await getDocs(collection(db, 'user_state'));
+        const arr = [];
+        snap.forEach(d => arr.push({ uid: d.id, ...d.data() }));
+        return arr;
       },
     };
     // 起動完了通知 (app.js が listen している)

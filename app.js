@@ -1131,13 +1131,16 @@ const store = {
   usageLog: [],      // { t, action, ref, meta } 監査用ログ(最新1000件)
   tosAccepted: false,
   tosAcceptedAt: 0,
-  // 課金: 当月の集計値. { ym: '2026-05', searches, aiEvals, hpFetches, costYen }
+  // 課金: 当月の集計値. { ym: '2026-05', searches, aiEvals, hpFetches }
   billing: {
     currentMonth: '',
     searches: 0,
     aiEvals: 0,
     hpFetches: 0,
   },
+  // 過去月の請求額アーカイブ (請求書発行用)
+  // [{ym, base, search, ai, fetch, total, searches, aiEvals, hpFetches, archivedAt}]
+  billingHistory: [],
   // 課金設定(管理者がFirestore経由で全ユーザー共通設定として変更可)
   billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
   opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2 },
@@ -1164,6 +1167,7 @@ function loadStore() {
     store.tosAccepted = d.tosAccepted === true;
     store.tosAcceptedAt = d.tosAcceptedAt || 0;
     if (d.billing) store.billing = { ...store.billing, ...d.billing };
+    if (Array.isArray(d.billingHistory)) store.billingHistory = d.billingHistory;
     if (d.billingConfig) store.billingConfig = d.billingConfig;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
@@ -1205,6 +1209,7 @@ function _saveStoreImpl() {
     tosAccepted: store.tosAccepted,
     tosAcceptedAt: store.tosAcceptedAt,
     billing: store.billing,
+    billingHistory: store.billingHistory || [],
     billingConfig: store.billingConfig,
     opts: store.opts,
   };
@@ -1232,10 +1237,44 @@ function ensureBillingMonth() {
     store.billing = { currentMonth: '', searches: 0, aiEvals: 0, hpFetches: 0 };
   }
   const ym = currentYM();
+  if (store.billing.currentMonth && store.billing.currentMonth !== ym) {
+    // 月が変わった → 前月分を billingHistory にアーカイブ(請求漏れ防止)
+    archivePreviousMonth();
+  }
   if (store.billing.currentMonth !== ym) {
-    // 月が変わったらリセット
     store.billing = { currentMonth: ym, searches: 0, aiEvals: 0, hpFetches: 0 };
   }
+}
+
+function archivePreviousMonth() {
+  if (!store.billing || !store.billing.currentMonth) return;
+  const b = store.billing;
+  // billingConfig は当時のものを記録(後から単価変更されても遡及しない)
+  const cfg = getBillingConfig();
+  const baseCost = cfg.baseMonthly || 0;
+  const searchCost = (b.searches || 0) * (cfg.perSearch || 0);
+  const aiCost = (b.aiEvals || 0) * (cfg.perAiEvaluation || 0);
+  const fetchCost = (b.hpFetches || 0) * (cfg.perHpFetch || 0);
+  const total = Math.round(baseCost + searchCost + aiCost + fetchCost);
+  if (!store.billingHistory) store.billingHistory = [];
+  // 既に同じymのアーカイブがあれば上書き
+  store.billingHistory = store.billingHistory.filter(h => h.ym !== b.currentMonth);
+  store.billingHistory.unshift({
+    ym: b.currentMonth,
+    searches: b.searches || 0,
+    aiEvals: b.aiEvals || 0,
+    hpFetches: b.hpFetches || 0,
+    base: Math.round(baseCost),
+    search: Math.round(searchCost),
+    ai: Math.round(aiCost),
+    fetch: Math.round(fetchCost),
+    total,
+    archivedAt: Date.now(),
+    // 当時の単価も記録
+    rates: { ...cfg },
+  });
+  // 直近24ヶ月のみ保持
+  if (store.billingHistory.length > 24) store.billingHistory.length = 24;
 }
 
 function getBillingConfig() {
@@ -1504,6 +1543,160 @@ function setupLoginModal() {
     if (!confirm('ログアウトしますか？(ローカルキャッシュは残ります)')) return;
     try { await window.firebaseApi.signOut(); } catch (e) { console.warn(e); }
   });
+}
+
+/* ============ 管理者: 全ユーザー請求額レポート ============ */
+let _billingReportCache = null; // [{uid, email, billing, billingHistory}]
+
+function calcUserBillForMonth(userState, ym, fallbackCfg) {
+  // 当月: userState.billing (まだarchive前)
+  if (userState.billing && userState.billing.currentMonth === ym) {
+    const cfg = userState.billingConfig || fallbackCfg;
+    const baseCost = cfg.baseMonthly || 0;
+    const searchCost = (userState.billing.searches || 0) * (cfg.perSearch || 0);
+    const aiCost = (userState.billing.aiEvals || 0) * (cfg.perAiEvaluation || 0);
+    const fetchCost = (userState.billing.hpFetches || 0) * (cfg.perHpFetch || 0);
+    return {
+      searches: userState.billing.searches || 0,
+      aiEvals: userState.billing.aiEvals || 0,
+      hpFetches: userState.billing.hpFetches || 0,
+      base: Math.round(baseCost),
+      usage: Math.round(searchCost + aiCost + fetchCost),
+      total: Math.round(baseCost + searchCost + aiCost + fetchCost),
+    };
+  }
+  // 過去月: billingHistory から検索
+  const hist = (userState.billingHistory || []).find(h => h.ym === ym);
+  if (hist) {
+    return {
+      searches: hist.searches || 0,
+      aiEvals: hist.aiEvals || 0,
+      hpFetches: hist.hpFetches || 0,
+      base: hist.base || 0,
+      usage: (hist.search || 0) + (hist.ai || 0) + (hist.fetch || 0),
+      total: hist.total || 0,
+    };
+  }
+  return null;
+}
+
+async function openBillingReport() {
+  if (!isAdminUser()) { alert('管理者のみ閲覧可能です'); return; }
+  if (!window.firebaseApi) { alert('Firebase未設定'); return; }
+  const modal = document.getElementById('billing-report-modal');
+  modal.hidden = false;
+  await refreshBillingReport();
+}
+
+async function refreshBillingReport() {
+  const status = document.getElementById('report-status');
+  status.textContent = '読込中…';
+  try {
+    _billingReportCache = await window.firebaseApi.listAllUserStates();
+    status.textContent = `${_billingReportCache.length}ユーザー取得`;
+  } catch (e) {
+    status.textContent = `取得失敗: ${e.message.slice(0,80)}`;
+    console.error(e);
+    return;
+  }
+  // 月セレクタを生成 (現在月 + 過去24ヶ月)
+  const monthSelect = document.getElementById('report-month-filter');
+  const months = new Set([currentYM()]);
+  for (const u of _billingReportCache) {
+    (u.billingHistory || []).forEach(h => months.add(h.ym));
+    if (u.billing?.currentMonth) months.add(u.billing.currentMonth);
+  }
+  const sortedMonths = [...months].sort().reverse();
+  monthSelect.innerHTML = sortedMonths.map(m => `<option value="${m}">${m}</option>`).join('');
+  renderBillingReportTable(sortedMonths[0]);
+}
+
+function renderBillingReportTable(ym) {
+  const tbody = document.getElementById('report-tbody');
+  const cfg = getBillingConfig();
+  const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+  const rows = [];
+  let grandTotal = 0;
+  for (const u of (_billingReportCache || [])) {
+    const bill = calcUserBillForMonth(u, ym, cfg);
+    if (!bill) continue;
+    grandTotal += bill.total;
+    const email = u._email || '(不明)';
+    const updated = u._updatedAt?.toDate ? u._updatedAt.toDate().toLocaleString('ja-JP') : '-';
+    rows.push(`
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px">${email}</td>
+        <td style="text-align:right;padding:6px">${bill.searches.toLocaleString()}</td>
+        <td style="text-align:right;padding:6px">${bill.aiEvals.toLocaleString()}</td>
+        <td style="text-align:right;padding:6px">${bill.hpFetches.toLocaleString()}</td>
+        <td style="text-align:right;padding:6px">${yen(bill.base)}</td>
+        <td style="text-align:right;padding:6px">${yen(bill.usage)}</td>
+        <td style="text-align:right;padding:6px;color:var(--accent);font-weight:600">${yen(bill.total)}</td>
+        <td style="text-align:right;padding:6px;font-size:11px;color:var(--muted)">${updated}</td>
+      </tr>
+    `);
+  }
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--muted)">${ym} の利用ユーザーなし</td></tr>`;
+  } else {
+    tbody.innerHTML = rows.join('');
+  }
+  document.getElementById('report-grand-total').textContent = yen(grandTotal);
+}
+
+function exportBillingReportCsv(allMonths = false) {
+  if (!_billingReportCache) { alert('先に「更新」を押してデータ取得してください'); return; }
+  const cfg = getBillingConfig();
+  const yen = n => Number(n).toFixed(0);
+  const rows = [['対象月','メールアドレス','検索数','AI評価数','HP取得数','基本料金','検索料金','AI料金','HP取得料金','合計請求額','最終更新']];
+  let targetMonths;
+  if (allMonths) {
+    const set = new Set();
+    for (const u of _billingReportCache) {
+      (u.billingHistory || []).forEach(h => set.add(h.ym));
+      if (u.billing?.currentMonth) set.add(u.billing.currentMonth);
+    }
+    targetMonths = [...set].sort();
+  } else {
+    targetMonths = [document.getElementById('report-month-filter').value];
+  }
+  for (const ym of targetMonths) {
+    for (const u of _billingReportCache) {
+      const bill = calcUserBillForMonth(u, ym, cfg);
+      if (!bill) continue;
+      const email = u._email || '(不明)';
+      const updated = u._updatedAt?.toDate ? u._updatedAt.toDate().toISOString() : '';
+      const userCfg = u.billingConfig || cfg;
+      rows.push([
+        ym, email, bill.searches, bill.aiEvals, bill.hpFetches,
+        yen(bill.base),
+        yen((bill.searches||0) * (userCfg.perSearch||0)),
+        yen((bill.aiEvals||0) * (userCfg.perAiEvaluation||0)),
+        yen((bill.hpFetches||0) * (userCfg.perHpFetch||0)),
+        yen(bill.total), updated,
+      ]);
+    }
+  }
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const fname = allMonths ? `tell-billing-all-${Date.now()}.csv` : `tell-billing-${targetMonths[0]}.csv`;
+  downloadFile(fname, csv);
+}
+
+function setupBillingReportModal() {
+  const openBtn = document.getElementById('open-billing-report');
+  const closeBtn = document.getElementById('report-close');
+  const refreshBtn = document.getElementById('report-refresh');
+  const csvBtn = document.getElementById('report-export-csv');
+  const csvAllBtn = document.getElementById('report-export-csv-all');
+  const monthSel = document.getElementById('report-month-filter');
+  const modal = document.getElementById('billing-report-modal');
+  if (openBtn) openBtn.addEventListener('click', openBillingReport);
+  if (closeBtn) closeBtn.addEventListener('click', () => { modal.hidden = true; });
+  if (refreshBtn) refreshBtn.addEventListener('click', refreshBillingReport);
+  if (csvBtn) csvBtn.addEventListener('click', () => exportBillingReportCsv(false));
+  if (csvAllBtn) csvAllBtn.addEventListener('click', () => exportBillingReportCsv(true));
+  if (monthSel) monthSel.addEventListener('change', () => renderBillingReportTable(monthSel.value));
+  if (modal) modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
 }
 
 /* ============ 管理者: 課金設定パネル ============ */
@@ -3697,6 +3890,7 @@ async function init() {
   setupTosModal();
   setupLoginModal();
   setupAdminPanel();
+  setupBillingReportModal();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {
