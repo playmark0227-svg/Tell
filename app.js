@@ -2711,37 +2711,52 @@ function rootDomain(url) {
 function generateFilteredQueries(productText, icp, filters, round = 0) {
   const queries = [];
   const { industry } = filters || {};
-  // 後方互換: prefecture/city が単一でも、prefectures/cities[] でも受け取れる
   const prefectures = Array.isArray(filters?.prefectures) ? filters.prefectures
     : (filters?.prefecture ? [filters.prefecture] : []);
   const cities = Array.isArray(filters?.cities) ? filters.cities
     : (filters?.city ? [filters.city] : []);
-  const CORP_KWS = [
-    '株式会社 会社概要', '中小企業 会社概要', '採用情報 株式会社', '代表電話',
-    '会社案内 法人', '事業内容 株式会社', '事業所 一覧', '工場 案内', '沿革 設立',
-  ];
-  const targetIndustries = industry ? [industry] : (icp?.industries || []).slice(0, 4);
-  const kw = CORP_KWS[round % CORP_KWS.length];
 
-  // 地域単位 × 業種単位でクエリ生成 (掛け算で網羅)
-  // 1) 市区町村が指定されていればそれぞれを使う
+  // Brave検索演算子を活用した高精度クエリパターン
+  // intitle:会社概要 → 公式HPの会社概要ページに集中
+  // -intitle:ランキング 比較 → 比較記事を除外
+  const QUERY_PATTERNS = [
+    // 公式HP集中型 (intitle で会社概要ページに絞る)
+    (ind, loc) => `intitle:会社概要 "${ind}" "${loc}" -intitle:ランキング -intitle:比較`,
+    // 代表電話付きで本社ページ狙い
+    (ind, loc) => `"${ind}" "${loc}" "代表電話" -intitle:とは -intitle:選び方`,
+    // 採用ページ経由 (中堅以上が出やすい)
+    (ind, loc) => `"${ind}" "${loc}" intitle:採用情報 -intitle:ランキング`,
+    // 事業所一覧 (拠点持つ会社)
+    (ind, loc) => `"${ind}" "${loc}" "事業所" OR "営業所" 株式会社`,
+    // 沿革+設立 (老舗企業)
+    (ind, loc) => `"${ind}" "${loc}" "沿革" "設立" 株式会社`,
+    // 工場(製造業向け)
+    (ind, loc) => `"${ind}" "${loc}" 工場 "代表電話"`,
+    // 取引先掲載(B2B)
+    (ind, loc) => `"${ind}" "${loc}" "取引先" OR "実績" -intitle:ランキング`,
+  ];
+
+  const targetIndustries = industry ? [industry] : (icp?.industries || []).slice(0, 4);
   const targetCityKeys = cities.length > 0 ? cities : prefectures;
+
   if (targetCityKeys.length === 0) {
-    // 地域指定なし(業種だけ): 既存ロジック
+    // 地域指定なし
     for (const ind of targetIndustries) {
-      queries.push(`${ind} ${kw}`);
-      queries.push(`${ind} 株式会社 会社概要`);
+      for (let pi = 0; pi < 3; pi++) {
+        const pat = QUERY_PATTERNS[(round + pi) % QUERY_PATTERNS.length];
+        queries.push(pat(ind, '日本'));
+      }
     }
   } else {
     for (const ind of targetIndustries) {
       for (const key of targetCityKeys) {
-        // key は "東京都" もしくは "東京都/港区" の形式
         const [pref, city] = key.includes('/') ? key.split('/') : [key, ''];
-        const locStr = city ? `${pref} ${city}` : pref;
-        queries.push(`${ind} ${locStr} ${kw}`);
-        // 別のキーワードでもう1本(網羅性UP)
-        const altKw = CORP_KWS[(round + 1) % CORP_KWS.length];
-        if (altKw !== kw) queries.push(`${ind} ${locStr} ${altKw}`);
+        const locStr = city || pref;
+        // 1地域あたり2-3パターンで網羅性UP
+        for (let pi = 0; pi < 3; pi++) {
+          const pat = QUERY_PATTERNS[(round + pi) % QUERY_PATTERNS.length];
+          queries.push(pat(ind, locStr));
+        }
       }
     }
   }
@@ -3307,6 +3322,115 @@ async function fetchPageViaProxy(targetUrl) {
   } catch (e) {
     return null;
   }
+}
+
+/* ============ 国税庁法人番号API: 地域 × 業種キーワードで法人検索 ============ */
+// ユーザー選択地域に実在する登記済み法人を、業種関連キーワードで検索して
+// 候補リストに追加する。Brave検索で漏れた中小企業を補完する役割。
+async function lookupHoujinByKeyword(keyword, prefectureName) {
+  if (!store.opts.braveProxy || !keyword) return [];
+  try {
+    const proxy = store.opts.braveProxy.replace(/\/+$/, '');
+    const res = await fetch(`${proxy}/houjin-bangou?name=${encodeURIComponent(keyword)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const corps = (data.corporations || data.corporation || []);
+    if (prefectureName) {
+      return corps.filter(c => (c.prefectureName || '') === prefectureName);
+    }
+    return corps;
+  } catch (e) {
+    console.warn('lookupHoujinByKeyword failed', keyword, e);
+    return [];
+  }
+}
+
+// 国税庁ベースの候補発見: 選択地域×業種キーワードから法人を引いて、
+// 各社のHPを Brave 検索で探して候補リストに追加
+async function discoverViaHoujinBangou(productText, icp, onProgress) {
+  const prefs = [...selectedPrefs()];
+  const cities = [...selectedCities()];
+  if (prefs.length === 0 && cities.length === 0) return [];
+  if (!icp || !icp.industries || icp.industries.length === 0) return [];
+
+  const candidates = [];
+  // 業種から検索キーワード生成 (より一般的なフレーズ)
+  const searchKeywords = icp.industries.slice(0, 4).flatMap(ind => {
+    // 業種名そのまま + よくある法人名フレーズ
+    return [ind, ind.replace(/業$/, '')];
+  }).filter((v, i, a) => v && a.indexOf(v) === i);
+
+  const targetPrefs = prefs.length > 0 ? prefs : [...new Set(cities.map(c => c.split('/')[0]))];
+
+  onProgress?.(`🏛 国税庁から${targetPrefs.length}地域 × ${searchKeywords.length}業種で法人検索中…`);
+
+  for (const pref of targetPrefs) {
+    for (const kw of searchKeywords) {
+      const corps = await lookupHoujinByKeyword(kw, pref);
+      onProgress?.(`🏛 「${kw}」(${pref}) → ${corps.length}法人`);
+      for (const c of corps.slice(0, 30)) { // 1検索あたり30社まで
+        candidates.push({
+          name: c.name || '',
+          official_name: c.name || '',
+          houjin_bangou: c.corporateNumber || c.corpNumber || '',
+          prefecture: c.prefectureName || pref,
+          city: c.cityName || '',
+          address: [c.prefectureName, c.cityName, c.streetNumber].filter(Boolean).join(''),
+          source: 'houjin-bangou-api',
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
+// 国税庁候補からHPを探して既存パイプラインに合流
+async function enrichHoujinCandidatesWithHP(candidates, productText, onProgress) {
+  const enriched = [];
+  for (let i = 0; i < candidates.length; i++) {
+    if (state.searchAborted) break;
+    const cand = candidates[i];
+    onProgress?.(`🏛 ${i+1}/${candidates.length} ${cand.name} のHPを検索…`);
+    try {
+      // 法人名で Brave 検索して公式HPを見つける
+      const searchResults = await braveSearch(`"${cand.name}" 公式 OR 会社概要`, 5);
+      // 最も会社名が含まれて、公式っぽいURLを選ぶ
+      const officialUrl = searchResults.find(r => {
+        const dom = rootDomain(r.url);
+        if (!dom || isExcludedDomain(r.url)) return false;
+        // タイトルに会社名が含まれているか
+        const cleanName = cand.name.replace(/(株式会社|合同会社|有限会社).*?/, '').trim();
+        return r.title && r.title.includes(cleanName);
+      }) || searchResults[0];
+      if (!officialUrl) continue;
+      const c = {
+        id: 600000 + Date.now() % 1000000 + i,
+        name: cand.name,
+        official_name: cand.name,
+        houjin_bangou: cand.houjin_bangou,
+        phone: '',
+        website: `https://${rootDomain(officialUrl.url)}`,
+        source_url: officialUrl.url,
+        contact_url: '',
+        industry: '',
+        prefecture: cand.prefecture,
+        city: cand.city,
+        address: cand.address,
+        size: 'small',
+        employees: 30,
+        description: officialUrl.description || '',
+        keywords: [],
+        found_via_product: productText.slice(0, 60),
+        discovered_at: Date.now(),
+        needs_enrichment: true,
+        _source: 'houjin-bangou-api',
+      };
+      enriched.push(c);
+    } catch (e) {
+      console.warn('houjin candidate HP search failed', cand.name, e);
+    }
+  }
+  return enriched;
 }
 
 /* ============ 国税庁法人番号API クライアント ============ */
