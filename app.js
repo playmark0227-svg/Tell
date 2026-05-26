@@ -1105,6 +1105,7 @@ function renderRow(c) {
     : `<span class="phone-empty">未取得（HPから問い合わせ）</span>`;
   return `
     <tr class="${trClass}" data-id="${c.id}">
+      <td data-label="比較" class="cmp-cell"><input type="checkbox" class="cmp-check" data-cmp-id="${c.id}"></td>
       <td data-label="適合度"><span class="score ${scoreClass(c.score)} score-clickable" data-detail-id="${c.id}" title="クリックで評価詳細" style="cursor:pointer">${c.score}</span></td>
       <td data-label="操作">
         <div class="row-actions">
@@ -2806,6 +2807,189 @@ function buildFewShotFromFeedback(productText, limit = 3) {
     lines.push(`- ${c.name} (${c.industry||'?'}) → AI評価${c.ai_score||'?'}点 ${judgment} ${correction}${comment}`);
   }
   return lines.join('\n') + '\n';
+}
+
+/* ============ 横並び比較モーダル ============ */
+function openCompareModal() {
+  const checked = [...document.querySelectorAll('.cmp-check:checked')]
+    .map(cb => parseInt(cb.dataset.cmpId, 10));
+  if (checked.length < 2) { alert('比較するには2社以上選択してください'); return; }
+  if (checked.length > 4) { alert('比較は最大4社までです'); return; }
+  const companies = checked.map(id => findCompanyById(id) || state.scored.find(c => c.id === id)).filter(Boolean);
+  const yen = n => '¥' + Number(n).toLocaleString('ja-JP');
+  const headerCols = companies.map(c => `<th style="min-width:200px;text-align:center">${c.name}<br><small style="color:var(--muted)">${c.industry||'?'}</small></th>`).join('');
+  const rows = [];
+  const addRow = (label, fn) => {
+    const cells = companies.map(c => `<td style="padding:8px;border:1px solid var(--border);font-size:13px">${fn(c)||''}</td>`).join('');
+    rows.push(`<tr><th style="text-align:left;padding:8px;background:var(--bg);border:1px solid var(--border);white-space:nowrap">${label}</th>${cells}</tr>`);
+  };
+  addRow('適合度', c => `<span class="score ${scoreClass(c.score)}">${c.score||'-'}</span>${c._used_deep_eval?' 🧠':''}${c._ensemble?' 🎯':''}`);
+  addRow('確信度', c => c.ai_confidence || '-');
+  addRow('業種', c => c.industry || '-');
+  addRow('所在地', c => `${c.prefecture||''}${c.city||''}<br><small>${c.address||''}</small>`);
+  addRow('従業員', c => c.employees ? `${c.employees}名` : '-');
+  addRow('代表電話', c => c.phone || '<span style="color:var(--muted)">未取得</span>');
+  addRow('HP', c => c.website ? `<a href="${c.website}" target="_blank">${rootDomain(c.website)}</a>` : '-');
+  addRow('法人番号', c => c.houjin_bangou || '-');
+  addRow('活動性', c => ({active:'⚡ アクティブ',inactive:'💤 停止',maybe_active:'◯ 活動中?'}[c.activeness] || '-'));
+  addRow('適合根拠', c => c.ai_fit_evidence || '-');
+  addRow('購買シグナル', c => (c.ai_buying_signals||[]).slice(0,3).join('、') || '-');
+  addRow('リスク', c => (c.ai_risks||[]).slice(0,2).join('、') || '-');
+  // 6次元バーチャート
+  const dimKeys = [
+    ['region_match', '地域'], ['industry_match', '業種'],
+    ['size_match', '規模'], ['timing_signal', 'タイミング'],
+    ['evidence_strength', '根拠'], ['pain_alignment', '課題'],
+  ];
+  for (const [k, label] of dimKeys) {
+    addRow(`内訳: ${label}`, c => {
+      const v = c.ai_dimensions?.[k] || 0;
+      const color = v >= 70 ? 'var(--good)' : v >= 40 ? 'var(--mid)' : 'var(--danger)';
+      return `<div style="background:var(--bg);height:14px;border-radius:3px;overflow:hidden;position:relative"><div style="width:${v}%;height:100%;background:${color}"></div><span style="position:absolute;top:0;left:4px;font-size:10px;color:#fff">${v}</span></div>`;
+    });
+  }
+  addRow('架電トピック', c => (c.ai_talking_points||[]).slice(0,3).map(t=>`• ${t}`).join('<br>') || '-');
+  addRow('クロスソース', c => typeof c.cross_source_count==='number' ? `${c.cross_source_count}サイト言及 (${({strong:'強',normal:'中',weak:'弱'})[c._verification]||'?'})` : '-');
+
+  document.getElementById('cmp-body').innerHTML = `
+    <table style="border-collapse:collapse;width:100%;font-size:13px">
+      <thead><tr><th style="background:var(--bg)">項目</th>${headerCols}</tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>
+  `;
+  document.getElementById('compare-modal').hidden = false;
+}
+
+function setupCompareModal() {
+  const modal = document.getElementById('compare-modal');
+  const closeBtn = document.getElementById('cmp-close');
+  if (closeBtn) closeBtn.addEventListener('click', () => { modal.hidden = true; });
+  if (modal) modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+  const cmpBtn = document.getElementById('compare-btn');
+  if (cmpBtn) cmpBtn.addEventListener('click', openCompareModal);
+  // 全選択トグル
+  const allCb = document.getElementById('cmp-check-all');
+  if (allCb) allCb.addEventListener('change', () => {
+    document.querySelectorAll('.cmp-check').forEach(cb => { cb.checked = allCb.checked; });
+  });
+}
+
+/* ============ スナップショット保存 / 復元 ============ */
+const SNAPSHOTS_KEY = 'tell.snapshots.v1';
+const SNAPSHOTS_MAX = 20;
+
+function loadSnapshots() {
+  try { return JSON.parse(localStorage.getItem(SNAPSHOTS_KEY) || '[]'); } catch { return []; }
+}
+function saveSnapshots(list) {
+  try { localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(list.slice(0, SNAPSHOTS_MAX))); } catch {}
+}
+function takeSnapshot(name) {
+  const snapshots = loadSnapshots();
+  const productText = document.getElementById('product-input')?.value || '';
+  const top = (state.scored || []).slice(0, 100);
+  const snap = {
+    id: Date.now().toString(36),
+    name: name || `${new Date().toLocaleString('ja-JP')}`,
+    t: Date.now(),
+    productText: productText.slice(0, 200),
+    icp: state.icp,
+    count: top.length,
+    avgScore: top.length > 0 ? Math.round(top.reduce((s,c)=>s+(c.score||0),0)/top.length) : 0,
+    highScoreCount: top.filter(c => c.score >= 80).length,
+    companies: top.map(c => ({
+      id: c.id, name: c.name, score: c.score,
+      phone: c.phone, industry: c.industry,
+      prefecture: c.prefecture, city: c.city,
+      website: c.website, houjin_bangou: c.houjin_bangou,
+      ai_fit_evidence: c.ai_fit_evidence,
+      _used_deep_eval: c._used_deep_eval,
+      _verification: c._verification,
+      activeness: c.activeness,
+      is_competitor: c.is_competitor,
+    })),
+  };
+  snapshots.unshift(snap);
+  saveSnapshots(snapshots);
+  logAction('snapshot_saved', snap.name);
+  return snap;
+}
+function renderSnapshotsList() {
+  const list = loadSnapshots();
+  const container = document.getElementById('snap-list');
+  if (!container) return;
+  if (list.length === 0) {
+    container.innerHTML = '<p class="muted" style="font-size:12px;text-align:center">スナップショットなし</p>';
+    return;
+  }
+  container.innerHTML = list.map(s => `
+    <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>${s.name}</strong>
+        <small style="color:var(--muted)">${new Date(s.t).toLocaleString('ja-JP')}</small>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">
+        ${s.count}社 / 平均${s.avgScore} / 高適合${s.highScoreCount}社
+        / 商材: ${s.productText.slice(0,30)}…
+      </div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="ghost small" data-snap-export="${s.id}">📥 CSV出力</button>
+        <button class="ghost small" data-snap-delete="${s.id}" style="color:var(--danger)">削除</button>
+      </div>
+    </div>
+  `).join('');
+  container.querySelectorAll('[data-snap-export]').forEach(b => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.snapExport;
+      const snap = loadSnapshots().find(s => s.id === id);
+      if (!snap) return;
+      const csv = snapshotToCsv(snap);
+      downloadFile(`snapshot-${snap.name.replace(/[^\w]/g,'_')}-${Date.now()}.csv`, csv);
+    });
+  });
+  container.querySelectorAll('[data-snap-delete]').forEach(b => {
+    b.addEventListener('click', () => {
+      if (!confirm('このスナップショットを削除しますか?')) return;
+      const id = b.dataset.snapDelete;
+      saveSnapshots(loadSnapshots().filter(s => s.id !== id));
+      renderSnapshotsList();
+    });
+  });
+}
+function snapshotToCsv(snap) {
+  const headers = ['会社名','適合度','電話','業種','所在地','HP','法人番号','適合根拠','活動性'];
+  const lines = [headers.join(',')];
+  for (const c of snap.companies) {
+    lines.push([
+      `"${c.name||''}"`, c.score||'',
+      `"${c.phone||''}"`, `"${c.industry||''}"`,
+      `"${c.prefecture||''} ${c.city||''}"`,
+      `"${c.website||''}"`, `"${c.houjin_bangou||''}"`,
+      `"${(c.ai_fit_evidence||'').replace(/"/g,'""')}"`,
+      `"${c.activeness||''}"`,
+    ].join(','));
+  }
+  return lines.join('\n');
+}
+function setupSnapshotsModal() {
+  const modal = document.getElementById('snapshots-modal');
+  const openBtn = document.getElementById('snapshots-btn');
+  const closeBtn = document.getElementById('snap-close');
+  const saveBtn = document.getElementById('snap-save');
+  if (openBtn) openBtn.addEventListener('click', () => {
+    renderSnapshotsList();
+    modal.hidden = false;
+  });
+  if (closeBtn) closeBtn.addEventListener('click', () => { modal.hidden = true; });
+  if (modal) modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    if (!state.scored || state.scored.length === 0) { alert('保存する結果がありません'); return; }
+    const name = document.getElementById('snap-name').value.trim() || `${new Date().toLocaleString('ja-JP')}`;
+    takeSnapshot(name);
+    document.getElementById('snap-name').value = '';
+    renderSnapshotsList();
+    alert(`✓ スナップショット「${name}」を保存しました`);
+  });
 }
 
 /* ============ スコア詳細モーダル ============ */
@@ -6110,6 +6294,8 @@ async function init() {
   setupBillingReportModal();
   setupMasterAdminModal();
   setupScoreDetailModal();
+  setupCompareModal();
+  setupSnapshotsModal();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {

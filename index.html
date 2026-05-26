@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515l">
+<link rel="stylesheet" href="style.css?v=20260515m">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515l</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515m</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -624,6 +624,8 @@ service cloud.firestore {
       <div class="results-actions">
         <button id="discover-similar-btn" class="ghost small" title="現在Top5に似た企業を追加発見">🔁 類似企業を追加発見</button>
         <button id="evolve-profile-btn" class="ghost small" title="商談化・DNC等の実績から商材プロファイル(ICP)をAIが進化させる">🧬 商材プロファイル進化</button>
+        <button id="compare-btn" class="ghost small" title="チェックした企業を横並び比較">📊 比較</button>
+        <button id="snapshots-btn" class="ghost small" title="現在の検索結果を保存・過去結果と比較">📸 スナップショット</button>
         <button id="export-results-inline" class="ghost small">📥 表示中をCSV出力(全項目)</button>
         <button id="export-saved-inline" class="ghost small">⭐ 保存リストをCSV出力</button>
       </div>
@@ -671,6 +673,7 @@ service cloud.firestore {
       <table id="results-table">
         <thead>
           <tr>
+            <th><input type="checkbox" id="cmp-check-all" title="全選択"></th>
             <th>適合度</th>
             <th>操作</th>
             <th>会社名</th>
@@ -783,6 +786,31 @@ service cloud.firestore {
   </div>
 </div>
 
+<div id="compare-modal" class="modal" hidden>
+  <div class="modal-content wide" style="max-width:1200px;max-height:92vh;overflow:auto">
+    <h3>📊 企業を横並びで比較</h3>
+    <div id="cmp-body"></div>
+    <div class="modal-actions">
+      <button id="cmp-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div id="snapshots-modal" class="modal" hidden>
+  <div class="modal-content" style="max-width:600px">
+    <h3>📸 検索スナップショット</h3>
+    <p class="muted" style="font-size:12px">過去の検索結果を保存して、後で比較・復元できます。</p>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="text" id="snap-name" placeholder="スナップショット名(例: 港区IT 2026/5)" style="flex:1">
+      <button id="snap-save">💾 現在の結果を保存</button>
+    </div>
+    <div id="snap-list" style="max-height:50vh;overflow:auto"></div>
+    <div class="modal-actions">
+      <button id="snap-close" class="ghost">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <div id="score-detail-modal" class="modal" hidden>
   <div class="modal-content wide" style="max-width:900px;max-height:90vh;overflow:auto">
     <h3 id="sd-company-name" style="margin-bottom:4px">会社名</h3>
@@ -871,9 +899,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515l"></script>
-<script type="module" src="firebase-sync.js?v=20260515l"></script>
-<script src="data/regions.js?v=20260515l"></script>
-<script src="app.js?v=20260515l"></script>
+<script src="firebase-config.js?v=20260515m"></script>
+<script type="module" src="firebase-sync.js?v=20260515m"></script>
+<script src="data/regions.js?v=20260515m"></script>
+<script src="app.js?v=20260515m"></script>
 </body>
 </html>
