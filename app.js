@@ -1132,6 +1132,7 @@ function renderRow(c) {
         ${c._verification === 'strong' ? `<div class="meta-tag good" title="外部${c.cross_source_count||0}サイトから言及・業界認知度高い">🌐 検証済</div>` : ''}
         ${c._verification === 'weak' ? `<div class="meta-tag warn" title="外部参照ほぼなし(新規/小規模/未公開法人の可能性)">⚠ 参照希薄</div>` : ''}
         ${c._sitemap_assisted ? `<div class="meta-tag" title="sitemap.xml を解析して情報密度高い独自ページを追加クロール">🗺 Sitemap</div>` : ''}
+        ${Array.isArray(c.recent_news) && c.recent_news.length > 0 ? `<div class="meta-tag good" title="最近のニュース ${c.recent_news.length}件取得済 (詳細クリック)">📰 News</div>` : ''}
       </td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">
@@ -2899,6 +2900,14 @@ function openScoreDetailModal(companyId) {
     const verifyLabel = { strong: '✓ 強く実在 (5+ 外部参照)', normal: '◯ 標準 (2-4 外部参照)', weak: '⚠ 参照希薄 (1未満)' }[c._verification] || '';
     sections.push(`<h4>🌐 クロスソース検証</h4><p>${verifyLabel}<br>外部参照ドメイン数: ${c.cross_source_count} サイト</p>`);
   }
+  if (Array.isArray(c.recent_news) && c.recent_news.length > 0) {
+    sections.push('<h4>📰 最新ニュース・トピック</h4><ul style="font-size:12px">' +
+      c.recent_news.map(n => `<li><a href="${n.url}" target="_blank">${n.title}</a><br><small style="color:var(--muted)">${n.snippet}</small></li>`).join('') + '</ul>');
+  }
+  if (Array.isArray(c.ai_news_talking_points) && c.ai_news_talking_points.length > 0) {
+    sections.push('<h4>💬 ニュースベースの架電トピック</h4><ul style="font-size:13px">' +
+      c.ai_news_talking_points.map(t => `<li>${t}</li>`).join('') + '</ul>');
+  }
   if (c.ai_score_pre_rerank && c.ai_score_pre_rerank !== c.ai_score) {
     sections.push(`<h4>🏆 リランキング</h4><p>個別評価: ${c.ai_score_pre_rerank}点 → リランキング後: ${c.ai_score}点<br><small>${c.ai_rerank_reason || ''}</small></p>`);
   }
@@ -4372,22 +4381,132 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
     }
   }
 
-  // Phase 9: 上位企業のクロスソース検証 (品質モード時のみ)
-  // Top10 を会社名単独で検索 → 外部参照数で実在性 + 業界認知度を確認
+  // Phase 9: 上位企業のクロスソース検証 + 最新ニュース取得 (品質モード時のみ)
   if (store.opts.qualityMode !== false && found.length >= 3) {
     try {
-      // ai_score 上位10社を取得
       const sortedTop = [...found].sort((a, b) => (b.ai_score || 0) - (a.ai_score || 0)).slice(0, 10);
       onProgress?.(`🔍 上位${sortedTop.length}社をクロスソース検証中…`);
       await verifyTopByCrossSource(sortedTop, onProgress);
+      onProgress?.(`📰 上位${Math.min(5, sortedTop.length)}社の最新ニュース取得中…`);
+      // ニュース取得はコストかかるので Top5 のみ
+      await enrichTopWithRecentNews(sortedTop.slice(0, 5), onProgress);
       rescoreFlush();
       saveStore();
     } catch (e) {
-      console.warn('cross-source verify failed', e);
+      console.warn('top verification failed', e);
     }
   }
   onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
   return found;
+}
+
+// 上位企業の最新ニュース・トピック検索
+// 6ヶ月以内のニュース言及を取得 → 「最近何やってるか」を架電トピックに追加
+async function enrichTopWithRecentNews(topCompanies, onProgress) {
+  if (!topCompanies || topCompanies.length === 0) return;
+  for (let i = 0; i < topCompanies.length; i++) {
+    if (state.searchAborted) break;
+    const c = topCompanies[i];
+    if (!c.name) continue;
+    onProgress?.(`📰 ${i+1}/${topCompanies.length} ${c.name} の最新ニュース検索…`);
+    try {
+      // Brave search with freshness=pm (past month)
+      // ※ Brave APIは freshness パラメータをサポート: pd(day)/pw(week)/pm(month)/py(year)
+      const results = await braveSearchOnceWithFreshness(`"${c.name}"`, 5, 'py');
+      const ownDomain = rootDomain(c.website || c.source_url || '');
+      // 自社HP以外のニュース・プレスリリース系を抽出
+      const newsItems = results
+        .filter(r => {
+          const dom = rootDomain(r.url);
+          if (!dom || dom === ownDomain) return false;
+          return /prtimes|press|news|nikkei|toyokeizai|diamond|business|/.test(r.url + (r.title||''));
+        })
+        .slice(0, 5)
+        .map(r => ({
+          title: r.title || '',
+          url: r.url,
+          snippet: (r.description || '').slice(0, 200),
+        }));
+      if (newsItems.length > 0) {
+        c.recent_news = newsItems;
+        // AIに news を要約させて architecture-level の talking point に追加
+        try {
+          const summary = await summarizeNewsForTalkingPoints(c, newsItems);
+          if (summary && summary.length > 0) {
+            c.ai_news_talking_points = summary;
+            // 既存の talking_points に統合
+            c.ai_talking_points = [...(c.ai_talking_points || []), ...summary].slice(0, 7);
+          }
+        } catch (e) { /* skip */ }
+      }
+      // store にも反映
+      const target = store.importedCompanies.find(x => x.id === c.id);
+      if (target) {
+        target.recent_news = c.recent_news;
+        target.ai_news_talking_points = c.ai_news_talking_points;
+        target.ai_talking_points = c.ai_talking_points;
+      }
+    } catch (e) {
+      console.warn('recent news search failed', c.name, e);
+    }
+  }
+}
+
+// freshness パラメータ付き Brave search
+async function braveSearchOnceWithFreshness(query, count, freshness) {
+  const hasProxy = !!store.opts.braveProxy;
+  if (!hasProxy && !store.opts.braveKey) return [];
+  const delta = Date.now() - _braveLastCall.t;
+  if (delta < 1100) await new Promise(r => setTimeout(r, 1100 - delta));
+  _braveLastCall.t = Date.now();
+  const params = new URLSearchParams({
+    q: query, count: String(Math.min(count, 20)),
+    country: 'JP', search_lang: 'jp', ui_lang: 'ja-JP',
+    result_filter: 'web',
+    freshness,
+  });
+  let url, headers;
+  if (hasProxy) {
+    url = `${store.opts.braveProxy.replace(/\/+$/, '')}/search?${params}`;
+    headers = { 'Accept': 'application/json' };
+  } else {
+    url = `https://api.search.brave.com/res/v1/web/search?${params}`;
+    headers = { 'X-Subscription-Token': store.opts.braveKey, 'Accept': 'application/json' };
+  }
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) return [];
+    incrementUsage('search', 1);
+    const data = await res.json();
+    return (data.web?.results || []);
+  } catch { return []; }
+}
+
+// ニュース項目を商材文脈で要約して talking points 化
+async function summarizeNewsForTalkingPoints(company, newsItems) {
+  if (newsItems.length === 0) return [];
+  const productText = document.getElementById('product-input')?.value || '';
+  const list = newsItems.map((n, i) => `${i+1}. ${n.title}\n   ${n.snippet}`).join('\n');
+  const prompt = `# 商材
+${productText}
+
+# ${company.name} の最近のニュース ${newsItems.length}件
+${list}
+
+# タスク
+これらのニュースから、上記商材を提案する際に「架電冒頭で触れると効果的な」話題を3つまで抽出してください。
+ニュースの内容を短く(20字以内)パッケージ化してください。
+
+JSONのみで返答:
+["話題1", "話題2", "話題3"]`;
+  try {
+    const text = await callClaude({ system: '営業提案の話題抽出専門家', prompt, max_tokens: 500 });
+    incrementUsage('ai', 1);
+    const m = text.match(/\[[\s\S]*?\]/);
+    if (!m) return [];
+    const arr = JSON.parse(m[0]);
+    return Array.isArray(arr) ? arr.filter(s => typeof s === 'string').slice(0, 3) : [];
+  } catch { return []; }
 }
 
 // 上位企業のクロスソース検証
