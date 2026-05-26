@@ -943,6 +943,21 @@ function buildAIComment(company, icp, strategy, signals, score) {
     } else if (company.activeness === 'active') {
       parts.push(`✓ アクティブ(最近の更新あり)`);
     }
+    if (company.is_competitor) {
+      parts.push(`⛔ 競合企業: ${company.competitor_evidence || '同種商材を販売'}`);
+    }
+    if (Array.isArray(company.ai_talking_points) && company.ai_talking_points.length > 0) {
+      parts.push(`📞 架電トピック: ${company.ai_talking_points.slice(0,2).join('、')}`);
+    }
+    if (company.ai_dimensions) {
+      const d = company.ai_dimensions;
+      const dims = [
+        `地域${d.region_match||0}`, `業種${d.industry_match||0}`,
+        `規模${d.size_match||0}`, `タイミング${d.timing_signal||0}`,
+        `根拠${d.evidence_strength||0}`, `課題${d.pain_alignment||0}`,
+      ];
+      parts.push(`[内訳] ${dims.join('/')}`);
+    }
     if (company.ai_confidence) {
       const confJp = { low: '低', medium: '中', high: '高' }[company.ai_confidence] || company.ai_confidence;
       parts.push(`確信度: ${confJp}`);
@@ -1109,6 +1124,7 @@ function renderRow(c) {
         ${c._reranked ? `<div class="meta-tag good" title="最終リランキング適用">🏆 Reranked</div>` : ''}
         ${c.activeness === 'inactive' ? `<div class="meta-tag warn" title="廃業・事業終了シグナル検出">💤 活動停止?</div>` : ''}
         ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
+        ${c.is_competitor ? `<div class="meta-tag warn" title="競合企業(同種商材を販売)・架電厳禁: ${c.competitor_evidence||''}" style="background:rgba(220,0,0,.1);color:var(--danger);border-color:var(--danger)">⛔ 競合</div>` : ''}
       </td>
       <td data-label="業種">${c.industry}</td>
       <td data-label="所在地">
@@ -3823,6 +3839,14 @@ async function enrichCompanyDeep(c, productText) {
       best.ai_name_valid = ai.name_valid;
       best.ai_phone_valid = ai.phone_valid;
       best.ai_in_target_region = ai.in_target_region;
+      best.is_competitor = ai.is_competitor === true;
+      best.competitor_evidence = ai.competitor_evidence;
+      best.ai_dimensions = ai.dimensions || null;
+      best.ai_talking_points = ai.talking_points || [];
+      // 業種を HP から再分類した結果で上書き(あれば)
+      if (ai.actual_industry && (!best.industry || best.industry === '不明')) {
+        best.industry = ai.actual_industry;
+      }
       best._used_deep_eval = ai._used_deep_eval === true;
       // 国税庁登記情報
       if (ai.houjin_bangou) {
@@ -4171,6 +4195,10 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
       } catch (e) { /* 2回目失敗は無視 */ }
     }
 
+    // 競合企業は強制的に低スコア (架電厳禁)
+    if (stage3.is_competitor) {
+      finalScore = Math.min(finalScore, 10);
+    }
     return {
       ...stage1,
       score: finalScore,
@@ -4180,6 +4208,11 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
       buying_signals: stage3.buying_signals,
       risks: stage3.risks,
       ai_confidence: secondConfidence || stage3.confidence,
+      is_competitor: stage3.is_competitor,
+      competitor_evidence: stage3.competitor_evidence,
+      actual_industry: stage3.actual_industry,
+      dimensions: stage3.dimensions,
+      talking_points: stage3.talking_points,
       _used_deep_eval: true,
       _self_consistency_checked: secondConfidence !== null,
     };
@@ -4406,6 +4439,7 @@ ${(hpText || '').slice(0, 6000)}
    - 50-69: 業種マッチ + 弱いシグナル1-2個
    - 30-49: 業種は周辺、シグナルなし
    - 0-29: 適合しない・買う可能性低い
+   - 0-15: 競合(同種商材を販売している企業) → アプローチ厳禁
 
    ## スコア参考例 (キャリブレーション用)
 
@@ -4417,6 +4451,19 @@ ${(hpText || '').slice(0, 6000)}
 
    例C) 商材「英会話研修」 → 商社・HPに「海外展開強化」「英語ができる人材積極採用」
    → score:75 / fit_evidence:「海外展開強化中」/ citation:「英語ができる人材積極採用」
+
+   例D) 商材「クラウド勤怠管理」 → 別のクラウド勤怠管理を販売する SaaS 企業
+   → score:5 / is_competitor:true / reasoning:「同種商材を提供する競合」
+
+8. is_competitor (T/F): 評価対象が、商材と類似のサービス/製品を販売している会社なら true
+9. competitor_evidence: is_competitor=true の場合、その根拠引用 (なければ null)
+10. dimensions: スコアの内訳 (透明性のため):
+    - region_match: 0-100 (本社が選択地域内なら100、周辺県80、別地域0)
+    - industry_match: 0-100 (商材ターゲット業種に直結なら100)
+    - size_match: 0-100 (商材想定規模に合うなら100)
+    - timing_signal: 0-100 (採用拡大/新規事業/DX等 タイミングシグナル強度)
+    - evidence_strength: 0-100 (HPテキストに具体的根拠が多いほど高)
+    - pain_alignment: 0-100 (商材で解決される課題が言及されている度合)
 6. confidence: 評価の確信度(low/medium/high)。HPテキストが薄い場合は low
 7. risks: 営業時のリスク(競合製品ロックイン、業績悪化、買収済み等)。なければ空配列
 
@@ -4424,27 +4471,43 @@ ${(hpText || '').slice(0, 6000)}
 {
   "score": 0-100,
   "confidence": "low|medium|high",
+  "is_competitor": true|false,
+  "competitor_evidence": "競合の場合の根拠引用 or null",
+  "actual_industry": "HPから判明した実際の業種(暫定業種より優先)",
   "fit_evidence": "30字以内の要約",
   "fit_citations": [
     {"quote": "HPテキストからの直接引用", "why": "なぜ商材適合のシグナルか"}
   ],
   "buying_signals": ["成長シグナル", "課題シグナル", ...],
   "risks": ["リスク1", "リスク2"],
+  "dimensions": {
+    "region_match": 0-100,
+    "industry_match": 0-100,
+    "size_match": 0-100,
+    "timing_signal": 0-100,
+    "evidence_strength": 0-100,
+    "pain_alignment": 0-100
+  },
+  "talking_points": ["架電時に触れるべき具体的トピック (HPから引用ベース)"],
   "reasoning": "総合評価を50字以内で"
 }`;
 
   try {
     // Opus 4.7 + extended thinking (深い推論)
-    // budget_tokens は思考トークン予算。8000 = 適度な深さ
+    // アダプティブ思考予算: HP テキストが大きい場合や stage1 が borderline (40-70)
+    // の時はより多くのthinking budget を使う
+    let budget = 8000;
+    if (hpText && hpText.length > 5000) budget = 12000;
+    if (stage1 && stage1.score >= 40 && stage1.score <= 70) budget = 14000;
     const text = await callClaude({
       system: sys,
       prompt,
-      max_tokens: 4000,
+      max_tokens: 5000,
       model: 'claude-opus-4-7',
-      thinking: { type: 'enabled', budget_tokens: 8000 },
+      thinking: { type: 'enabled', budget_tokens: budget },
       temperature: 1.0, // extended thinking時は1.0が必須
     });
-    incrementUsage('ai', 3); // Opus + thinking なのでコストは Haiku の~3倍として計上
+    incrementUsage('ai', budget >= 12000 ? 4 : 3); // 高budget時は単位も多めに計上
     // 最後の JSON ブロックを抽出
     const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
     if (matches.length === 0) return null;
@@ -4467,10 +4530,15 @@ ${(hpText || '').slice(0, 6000)}
     return {
       score: Math.max(0, Math.min(100, parseInt(lastJson.score, 10) || 0)),
       confidence: lastJson.confidence || 'medium',
+      is_competitor: lastJson.is_competitor === true,
+      competitor_evidence: lastJson.competitor_evidence || null,
+      actual_industry: lastJson.actual_industry || null,
       fit_evidence: lastJson.fit_evidence || null,
       fit_citations: Array.isArray(lastJson.fit_citations) ? lastJson.fit_citations.slice(0, 5) : [],
       buying_signals: Array.isArray(lastJson.buying_signals) ? lastJson.buying_signals.slice(0, 6) : [],
       risks: Array.isArray(lastJson.risks) ? lastJson.risks.slice(0, 4) : [],
+      dimensions: lastJson.dimensions || null,
+      talking_points: Array.isArray(lastJson.talking_points) ? lastJson.talking_points.slice(0, 5) : [],
       reasoning: String(lastJson.reasoning || '').slice(0, 100),
     };
   } catch (e) {
