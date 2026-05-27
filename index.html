@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515z">
+<link rel="stylesheet" href="style.css?v=20260516a">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515z</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516a</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -653,6 +653,7 @@ service cloud.firestore {
       <div class="results-actions">
         <button id="discover-similar-btn" class="ghost small" title="現在Top5に似た企業を追加発見">🔁 類似企業を追加発見</button>
         <button id="evolve-profile-btn" class="ghost small" title="商談化・DNC等の実績から商材プロファイル(ICP)をAIが進化させる">🧬 商材プロファイル進化</button>
+        <button id="learn-matching-btn" class="ghost small" title="CRM顧客の動き(受注/失注/メモ)から「どんな会社が刺さるか」をAIが学習。次回検索から自動適用">🎓 AI学習を実行</button>
         <button id="compare-btn" class="ghost small" title="チェックした企業を横並び比較">📊 比較</button>
         <button id="snapshots-btn" class="ghost small" title="現在の検索結果を保存・過去結果と比較">📸 スナップショット</button>
         <button id="blind-spots-btn" class="ghost small" title="検索結果の偏りをAIが分析し、見落としを指摘">🎯 ブラインドスポット分析</button>
@@ -1247,9 +1248,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515z"></script>
-<script type="module" src="firebase-sync.js?v=20260515z"></script>
-<script src="data/regions.js?v=20260515z"></script>
-<script src="app.js?v=20260515z"></script>
+<script src="firebase-config.js?v=20260516a"></script>
+<script type="module" src="firebase-sync.js?v=20260516a"></script>
+<script src="data/regions.js?v=20260516a"></script>
+<script src="app.js?v=20260516a"></script>
 </body>
 </html>

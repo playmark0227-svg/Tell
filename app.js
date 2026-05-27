@@ -1243,6 +1243,8 @@ const store = {
   opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [] },
   feedback: {}, // companyId -> { rating: 'good'|'bad'|null, score_correction, comment, t }
   crm: { customers: [] }, // 顧客管理リスト
+  searchLogs: [], // 各検索の記録 [{id, t, productText, regions, industries, results, outcome}]
+  matchingLearnings: null, // AIが学習した適合パターン (analyzeMatchingLearnings の結果)
 };
 
 function loadStore() {
@@ -1270,6 +1272,8 @@ function loadStore() {
     if (d.billingConfig) store.billingConfig = d.billingConfig;
     if (d.feedback) store.feedback = d.feedback;
     if (d.crm) store.crm = d.crm;
+    if (Array.isArray(d.searchLogs)) store.searchLogs = d.searchLogs;
+    if (d.matchingLearnings) store.matchingLearnings = d.matchingLearnings;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1314,6 +1318,8 @@ function _saveStoreImpl() {
     billingConfig: store.billingConfig,
     feedback: store.feedback || {},
     crm: store.crm || { customers: [] },
+    searchLogs: store.searchLogs || [],
+    matchingLearnings: store.matchingLearnings || null,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -3690,6 +3696,186 @@ function setupSettingsPanel() {
   });
 }
 
+/* ============ AI マッチング学習システム ============
+ * 検索の都度ログを取り、CRM の動き(架電/商談化/受注/失注/メモ)から
+ * 「どんな企業が刺さるか」のパターンを AI に抽出させて、
+ * 次回の検索クエリ生成と評価プロンプトに学習結果を注入する。
+ *
+ * データフロー:
+ *   検索 → searchLogs に記録
+ *   CRM 操作 → 各 customer に activity 蓄積
+ *   定期的に / 手動トリガで analyzeMatchingLearnings() 実行
+ *   → store.matchingLearnings に保存
+ *   次回検索時に aiGenerateQueries と aiScoreStage3Deep が学習結果を読み込む
+ */
+
+function logSearchSession(productText, regions, industries, found) {
+  if (!store.searchLogs) store.searchLogs = [];
+  const log = {
+    id: 'log_' + Date.now().toString(36),
+    t: Date.now(),
+    productText: (productText || '').slice(0, 200),
+    regions: Array.isArray(regions) ? regions : [],
+    industries: Array.isArray(industries) ? industries : [],
+    results_summary: {
+      total: found.length,
+      avg_score: found.length ? Math.round(found.reduce((s,c)=>s+(c.ai_score||0),0)/found.length) : 0,
+      high_score_count: found.filter(c => (c.ai_score||0) >= 80).length,
+    },
+    top_companies: found.slice(0, 20).map(c => ({
+      id: c.id,
+      name: c.name,
+      industry: c.industry,
+      prefecture: c.prefecture,
+      city: c.city,
+      score: c.ai_score || 0,
+      ai_fit_evidence: c.ai_fit_evidence,
+      ai_buying_signals: c.ai_buying_signals,
+      houjin_bangou: c.houjin_bangou,
+    })),
+  };
+  store.searchLogs.unshift(log);
+  // 直近100検索のみ保持
+  if (store.searchLogs.length > 100) store.searchLogs.length = 100;
+  saveStore();
+  return log;
+}
+
+// 全 CRM 顧客 + searchLogs + feedback から AI が学習パターンを抽出
+async function analyzeMatchingLearnings() {
+  if (!store.opts.aiKey && !store.opts.braveProxy) return null;
+  ensureCrm();
+
+  // データ準備
+  const won = store.crm.customers.filter(c => c.stage === 'won');
+  const lost = store.crm.customers.filter(c => c.stage === 'lost');
+  const meeting = store.crm.customers.filter(c => ['meeting', 'proposal'].includes(c.stage));
+  const rejected_phone = store.crm.customers.filter(c => c.activities?.some(a => a.type==='call' && /拒否|断り|不要|興味なし/.test(a.content || '')));
+  const goodFb = Object.entries(store.feedback||{}).filter(([id,fb]) => fb.rating === 'good');
+  const badFb = Object.entries(store.feedback||{}).filter(([id,fb]) => fb.rating === 'bad');
+
+  // 全アクティビティ + メモを抽出
+  const allActivities = [];
+  for (const c of store.crm.customers) {
+    for (const a of (c.activities || [])) {
+      allActivities.push({ customer: c.name, stage: c.stage, ...a });
+    }
+    if (c.memo) allActivities.push({ customer: c.name, stage: c.stage, type: 'memo', content: c.memo, t: c.created_at });
+  }
+
+  const minSamples = won.length + lost.length + rejected_phone.length;
+  if (minSamples < 2 && goodFb.length === 0 && badFb.length === 0) {
+    return { error: '学習データ不足: 商談化・受注・失注・👍👎 を最低数件記録してから再実行してください' };
+  }
+
+  const productList = [...new Set(store.searchLogs.map(l => l.productText.slice(0, 50)))].slice(0, 5);
+  const profile = (label, list) => list.slice(0, 10).map((c, i) => {
+    const acts = (c.activities||[]).slice(0,3).map(a => `${a.type}:${(a.content||'').slice(0,40)}`).join(' / ');
+    return `${i+1}. ${c.name} (${c.industry||'?'}, ${c.prefecture||''}${c.city||''}, ${c.employees||'?'}名)
+    商談額:${c.deal_value||0}円, 確度:${c.deal_prob||0}%, 担当:${c.contact_title||''}${c.contact_person?' '+c.contact_person:''}
+    メモ:${(c.memo||'').slice(0,150)}
+    履歴:${acts || 'なし'}`;
+  }).join('\n');
+
+  const sys = `あなたはB2B営業のシニアアナリストです。実際の営業結果データから「どんな企業に当てれば刺さるか」のパターンを抽出してください。一般論ではなく、与えられた具体的データから読み取れる法則のみを返してください。`;
+
+  const prompt = `# 営業データ分析
+
+## 扱ってきた商材
+${productList.map((p,i) => `${i+1}. ${p}`).join('\n') || '(なし)'}
+
+## 受注した顧客 (${won.length}社)
+${profile('won', won) || '(なし)'}
+
+## 失注した顧客 (${lost.length}社)
+${profile('lost', lost) || '(なし)'}
+
+## 商談中/提案中 (${meeting.length}社)
+${profile('meeting', meeting) || '(なし)'}
+
+## 架電で「拒否・興味なし」と言われた顧客 (${rejected_phone.length}社)
+${profile('rejected', rejected_phone) || '(なし)'}
+
+## ユーザー👍評価 ${goodFb.length}件 / 👎評価 ${badFb.length}件
+${goodFb.slice(0,5).map(([id,fb]) => {
+  const c = findCompanyById(parseInt(id, 10));
+  return c ? `👍 ${c.name} (${c.industry||'?'}): ${fb.comment||''}` : '';
+}).filter(Boolean).join('\n')}
+${badFb.slice(0,5).map(([id,fb]) => {
+  const c = findCompanyById(parseInt(id, 10));
+  return c ? `👎 ${c.name} (${c.industry||'?'}): スコア${fb.score_correction!==null?'→'+fb.score_correction:''} / ${fb.comment||''}` : '';
+}).filter(Boolean).join('\n')}
+
+# タスク
+上記データから、未来の検索精度を上げるための「学習結果」を抽出してください。
+具体的な根拠 (どの会社の何を見て言えるか) を必ず添えてください。データが薄い項目は null にしてください。
+
+JSONのみで返答:
+{
+  "winning_industry_patterns": ["業種名: パターン (根拠: ○○社で...)"],
+  "losing_industry_patterns": ["避けるべき業種: 理由 (根拠: ○○社で...)"],
+  "winning_size_patterns": ["規模/特徴とその根拠"],
+  "ideal_decision_maker_titles": ["効いた決裁者の役職"],
+  "winning_timing_signals": ["購買タイミングのサイン (HP/会話)"],
+  "rejection_patterns": ["架電段階で拒否される共通点"],
+  "killer_talking_points": ["受注に効いたトーク内容"],
+  "common_concerns": ["失注/拒否時に多く出た懸念"],
+  "scoring_adjustments": ["スコアリングで気をつけるべき点(例: ○○業種は実際より高くなりがち)"],
+  "summary": "総合的な学習サマリー 200字以内",
+  "confidence": "low|medium|high (データ量で判定)"
+}`;
+
+  try {
+    const text = await callClaude({
+      system: sys, prompt,
+      model: 'claude-opus-4-7',
+      max_tokens: 4000,
+      thinking: { type: 'enabled', budget_tokens: 8000 },
+      temperature: 1.0,
+    });
+    incrementUsage('ai', 5);
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { error: 'AI応答の解析失敗' };
+    const obj = JSON.parse(m[0]);
+    obj._analyzed_at = Date.now();
+    obj._sample_counts = { won: won.length, lost: lost.length, meeting: meeting.length, rejected: rejected_phone.length };
+    store.matchingLearnings = obj;
+    saveStore();
+    return obj;
+  } catch (e) {
+    console.warn('analyzeMatchingLearnings failed', e);
+    return { error: e.message };
+  }
+}
+
+// プロンプトに注入する学習結果のテキスト断片
+function buildLearningContext() {
+  const L = store.matchingLearnings;
+  if (!L || L.error) return '';
+  const parts = ['\n## 過去データから学習したパターン (この知見を必ず適用)'];
+  if (L.summary) parts.push(`【総合】${L.summary}`);
+  if (L.confidence) parts.push(`【データ確信度】${L.confidence} (受注${L._sample_counts?.won||0}/失注${L._sample_counts?.lost||0}件分析)`);
+  if (Array.isArray(L.winning_industry_patterns) && L.winning_industry_patterns.length) {
+    parts.push(`【刺さる業種・特徴】\n${L.winning_industry_patterns.slice(0,5).map(p=>`- ${p}`).join('\n')}`);
+  }
+  if (Array.isArray(L.losing_industry_patterns) && L.losing_industry_patterns.length) {
+    parts.push(`【避けるべきパターン】\n${L.losing_industry_patterns.slice(0,5).map(p=>`- ${p}`).join('\n')}`);
+  }
+  if (Array.isArray(L.winning_size_patterns) && L.winning_size_patterns.length) {
+    parts.push(`【規模特性】\n${L.winning_size_patterns.slice(0,3).map(p=>`- ${p}`).join('\n')}`);
+  }
+  if (Array.isArray(L.rejection_patterns) && L.rejection_patterns.length) {
+    parts.push(`【架電拒否パターン (除外推奨)】\n${L.rejection_patterns.slice(0,3).map(p=>`- ${p}`).join('\n')}`);
+  }
+  if (Array.isArray(L.scoring_adjustments) && L.scoring_adjustments.length) {
+    parts.push(`【スコアリング調整】\n${L.scoring_adjustments.slice(0,3).map(p=>`- ${p}`).join('\n')}`);
+  }
+  if (Array.isArray(L.killer_talking_points) && L.killer_talking_points.length) {
+    parts.push(`【効果あったトーク】\n${L.killer_talking_points.slice(0,3).map(p=>`- ${p}`).join('\n')}`);
+  }
+  return parts.join('\n');
+}
+
 /* ============ ユーザーフィードバック (AI 自己改善ループ) ============ */
 function recordFeedback(companyId, rating, scoreCorrection = null, comment = '') {
   if (!store.feedback) store.feedback = {};
@@ -5000,9 +5186,11 @@ ${productText}
 想定課題: ${(icp.pains||[]).slice(0,5).join('・')}
 
 # ${regionHint}
+${buildLearningContext()}
 
 # タスク
 この商材を購入する可能性がある日本企業を Brave Search で発見するためのクエリを生成してください。
+（上記の「過去データから学習したパターン」がある場合は、刺さる業種を厚く、避けるべき業種を薄く意識）
 
 ## 設計原則
 1. **その地域に本当に所在する会社のHPがヒットするように地域名を必ず含める**
@@ -5319,9 +5507,11 @@ ${industriesStr || '(指定なし)'}
 
 # ターゲット地域
 ${regionStr}
+${buildLearningContext()}
 
 # タスク
 上記商材を購入する可能性が高い、上記業種・地域に該当する実在の日本企業を **30社まで** 列挙してください。
+（過去学習データがある場合、それに合致する企業を優先）
 
 ## 重要なルール
 - 必ず実在する企業のみ。架空企業や推測は禁止
@@ -6906,6 +7096,7 @@ ${officialAddrLine}
 ${(hpText || '').slice(0, 6000)}
 
 ${buildFewShotFromFeedback(productText, 3)}
+${buildLearningContext()}
 ${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
   `\n## 管理者指定の競合企業リスト(これらに該当すれば is_competitor=true 強制)\n${store.opts.knownCompetitors.join('、')}\n` : ''}
 
@@ -7392,6 +7583,9 @@ async function runPipeline(input, options = {}) {
 
       progEl.classList.add('done');
       progEl.textContent = `✓ Brave:${found.length}社 + 国税庁:${houjinFound.length}社 + AI提案:${aiSuggested.length}社 = 計${found.length + houjinFound.length + aiSuggested.length}社の新規企業を並列発見`;
+      // 検索ログを記録 (将来のAI学習用)
+      const allFound = [...found, ...houjinFound, ...aiSuggested];
+      logSearchSession(input, [...prefList, ...cityList], (state.icp?.industries||[]).slice(0, 5), allFound);
     } catch (e) {
       console.error('discover error:', e);
       progEl.classList.add('error');
@@ -7918,6 +8112,43 @@ async function init() {
       alert(`失敗: ${e.message}`);
     } finally {
       bsBtn.disabled = false; bsBtn.textContent = '🎯 ブラインドスポット分析';
+    }
+  });
+  const lmBtn = document.getElementById('learn-matching-btn');
+  if (lmBtn) lmBtn.addEventListener('click', async () => {
+    if (!confirm('CRM顧客データ・架電履歴・メモを AI が分析し、「どんな企業が刺さるか」のパターンを学習します。\n以降の検索とAI評価に自動適用されます。実行しますか?')) return;
+    lmBtn.disabled = true;
+    lmBtn.textContent = '🎓 AI学習中…(30-60秒)';
+    try {
+      const result = await analyzeMatchingLearnings();
+      if (!result) { alert('AI/Brave未設定'); return; }
+      if (result.error) { alert(result.error); return; }
+      const counts = result._sample_counts || {};
+      const summary = `✓ AI学習完了
+
+【分析対象】受注${counts.won||0} / 失注${counts.lost||0} / 商談中${counts.meeting||0} / 拒否${counts.rejected||0}社
+【データ確信度】${result.confidence || '?'}
+
+【総合サマリー】
+${result.summary || ''}
+
+【刺さる業種・特徴】
+${(result.winning_industry_patterns||[]).slice(0,3).map(p=>`・${p}`).join('\n')}
+
+【避けるべきパターン】
+${(result.losing_industry_patterns||[]).slice(0,3).map(p=>`・${p}`).join('\n')}
+
+【架電拒否される共通点】
+${(result.rejection_patterns||[]).slice(0,2).map(p=>`・${p}`).join('\n')}
+
+これらは次回検索/AI評価に自動適用されます。
+詳細はマスター管理 > システム情報からも確認できます。`;
+      alert(summary);
+    } catch (e) {
+      alert(`失敗: ${e.message}`);
+    } finally {
+      lmBtn.disabled = false;
+      lmBtn.textContent = '🎓 AI学習を実行';
     }
   });
   const epBtn = document.getElementById('evolve-profile-btn');
