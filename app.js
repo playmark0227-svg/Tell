@@ -4510,24 +4510,19 @@ function generateFilteredQueries(productText, icp, filters, round = 0) {
   const cities = Array.isArray(filters?.cities) ? filters.cities
     : (filters?.city ? [filters.city] : []);
 
-  // Brave検索演算子を活用した高精度クエリパターン
-  // intitle:会社概要 → 公式HPの会社概要ページに集中
-  // -intitle:ランキング 比較 → 比較記事を除外
+  // Brave検索クエリパターン: シンプル系(高ヒット率) + 演算子系(高精度) のミックス
+  // ※ 演算子(intitle:/-intitle:/")はヒット数を激減させるので、デフォルトはシンプル系優先
   const QUERY_PATTERNS = [
-    // 公式HP集中型 (intitle で会社概要ページに絞る)
-    (ind, loc) => `intitle:会社概要 "${ind}" "${loc}" -intitle:ランキング -intitle:比較`,
-    // 代表電話付きで本社ページ狙い
-    (ind, loc) => `"${ind}" "${loc}" "代表電話" -intitle:とは -intitle:選び方`,
-    // 採用ページ経由 (中堅以上が出やすい)
-    (ind, loc) => `"${ind}" "${loc}" intitle:採用情報 -intitle:ランキング`,
-    // 事業所一覧 (拠点持つ会社)
-    (ind, loc) => `"${ind}" "${loc}" "事業所" OR "営業所" 株式会社`,
-    // 沿革+設立 (老舗企業)
-    (ind, loc) => `"${ind}" "${loc}" "沿革" "設立" 株式会社`,
-    // 工場(製造業向け)
-    (ind, loc) => `"${ind}" "${loc}" 工場 "代表電話"`,
-    // 取引先掲載(B2B)
-    (ind, loc) => `"${ind}" "${loc}" "取引先" OR "実績" -intitle:ランキング`,
+    // シンプル + 会社情報系 (Brave で十分ヒットする)
+    (ind, loc) => `${ind} ${loc} 会社概要 株式会社`,
+    (ind, loc) => `${ind} ${loc} 代表電話 株式会社`,
+    (ind, loc) => `${ind} ${loc} 採用情報 株式会社`,
+    (ind, loc) => `${ind} ${loc} 事業所 株式会社`,
+    (ind, loc) => `${ind} ${loc} 取引先 株式会社`,
+    (ind, loc) => `${ind} ${loc} 沿革 設立`,
+    (ind, loc) => `${ind} ${loc} 工場 株式会社`,
+    // 演算子系 (Brave対応してれば精度UP、未対応でも検索フォールバックされる)
+    (ind, loc) => `intitle:会社概要 ${ind} ${loc}`,
   ];
 
   const targetIndustries = industry ? [industry] : (icp?.industries || []).slice(0, 4);
