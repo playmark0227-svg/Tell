@@ -1635,3 +1635,128 @@ button.danger {
   box-shadow: 0 20px 50px rgba(0,0,0,0.2);
 }
 .modal-actions { gap: 8px; }
+
+/* ========================================
+   PC全画面レイアウト (発見・評価タブ)
+   ======================================== */
+
+/* タブパネルが余分なpaddingを持たないように */
+#tab-discover .container { max-width: none; padding: 0; margin: 0; }
+
+/* 2カラムグリッドレイアウト */
+.discover-layout {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 16px;
+  padding: 16px;
+  min-height: calc(100vh - 56px);
+  align-items: start;
+}
+
+.discover-left {
+  position: sticky;
+  top: 72px; /* top-nav 56px + 余白 */
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.discover-right {
+  min-width: 0; /* グリッド子要素の overflow 対策 */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ヘッダのコンパクト化 */
+.discover-header {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.discover-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.discover-subtitle {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 左カラム内のパネルをコンパクトに */
+.discover-left .panel {
+  padding: 14px 16px;
+  margin: 0;
+}
+.discover-left .panel h2 {
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+/* notice をコンパクトに */
+.notice.container-compact {
+  background: var(--warn-bg);
+  border-left: 3px solid var(--warn-border);
+  padding: 10px 14px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 8px;
+  color: #78350f;
+}
+.notice.container-compact ul { margin: 4px 0 0 0; padding-left: 16px; }
+
+/* setup-panel をコンパクト化 */
+.discover-left .setup-panel { padding: 14px 16px; }
+.discover-left .setup-group { margin-bottom: 14px; padding-bottom: 14px; }
+.discover-left .setup-group:last-child { margin-bottom: 0; padding-bottom: 0; }
+.discover-left .setup-label { font-size: 12px; margin-bottom: 6px; }
+.discover-left textarea { min-height: 80px; font-size: 13px; }
+.discover-left .filters {
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.discover-left .filters label { font-size: 11px; }
+.discover-left .big-cta {
+  font-size: 14px;
+  padding: 12px 18px;
+  margin-top: 8px;
+}
+
+/* 右カラムの結果テーブルを大きく */
+.discover-right #results-section { margin: 0; padding: 16px; }
+.discover-right .results-header { margin-bottom: 10px; }
+.discover-right #results-table { font-size: 13px; }
+
+/* 結果テーブル: 横スクロール可能 */
+.discover-right .table-wrap {
+  overflow-x: auto;
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+}
+
+/* classification/strategy/icp はコンパクトに右カラム上部に */
+.discover-right .panel { margin: 0; padding: 14px 18px; }
+.discover-right .panel h2 { font-size: 14px; margin-bottom: 8px; }
+
+/* タブレット (1024px以下) は1カラムに戻す */
+@media (max-width: 1024px) {
+  .discover-layout {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+  .discover-left {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .discover-right .table-wrap { max-height: none; }
+}
+
+/* 既存ヘッダの lead 文章は左カラムに置き換えたので非表示 */
+#tab-discover > header { display: none; }

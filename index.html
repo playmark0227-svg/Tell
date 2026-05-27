@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260515w">
+<link rel="stylesheet" href="style.css?v=20260515x">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515w</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260515x</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -466,13 +466,18 @@ service cloud.firestore {
 
 <div class="tab-panel active" id="tab-discover">
 
-<header>
-  <div class="container">
-    <p class="lead">商材を入力するとAIが理想顧客プロファイル（ICP）を生成し、登録された法人リストを適合度順に並べ替えます。</p>
-  </div>
+<!-- PC レイアウト: 左カラム(設定) + 右カラム(分析・結果) のグリッド -->
+<div class="discover-layout">
+
+<!-- 左カラム: 検索設定 + 分析結果(コンパクト) -->
+<aside class="discover-left">
+
+<header class="discover-header">
+  <h2 class="discover-title">🔍 発見・評価</h2>
+  <p class="discover-subtitle">商材と地域を指定して企業を発見・適合度スコアリング</p>
 </header>
 
-<div class="notice container">
+<div class="notice container-compact" style="margin:0 0 12px 0">
   <strong>⚖️ 法令遵守チェックリスト</strong>
   <ul>
     <li>収集対象は<strong>法人の公開連絡先のみ</strong>（個人宅・個人携帯は対象外）</li>
@@ -612,6 +617,11 @@ service cloud.firestore {
     </div>
   </section>
 
+</aside>
+
+<!-- 右カラム: 分析 + 結果テーブル (画面全体に拡張) -->
+<section class="discover-right">
+
   <section class="panel" id="classification-section" hidden>
     <h2>2. 商材判別</h2>
     <div id="classification-display"></div>
@@ -719,6 +729,9 @@ service cloud.firestore {
   </section>
 
 </div>
+
+</section> <!-- /discover-right -->
+</div> <!-- /discover-layout -->
 
 </div> <!-- /tab-discover -->
 
@@ -1234,9 +1247,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260515w"></script>
-<script type="module" src="firebase-sync.js?v=20260515w"></script>
-<script src="data/regions.js?v=20260515w"></script>
-<script src="app.js?v=20260515w"></script>
+<script src="firebase-config.js?v=20260515x"></script>
+<script type="module" src="firebase-sync.js?v=20260515x"></script>
+<script src="data/regions.js?v=20260515x"></script>
+<script src="app.js?v=20260515x"></script>
 </body>
 </html>
