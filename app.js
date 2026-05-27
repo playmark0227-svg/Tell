@@ -4906,7 +4906,15 @@ async function braveSearchOnce(query, count = 20, offset = 0) {
     }
     throw new Error(`プロキシ接続失敗: ${e.message}`);
   }
-  if (!res.ok) throw new Error(`Brave API ${res.status}: ${(await res.text()).slice(0,150)}`);
+  if (!res.ok) {
+    const errText = (await res.text()).slice(0,150);
+    // 402 = Brave クォータ超過 → グローバルフラグでセットして以降スキップ
+    if (res.status === 402) {
+      window._braveQuotaExceeded = true;
+      throw new Error(`Brave API クォータ超過: 今月の検索回数を使い切りました。https://api-dashboard.search.brave.com/app/dashboard で Pro Data ($3/1k) にアップグレード推奨`);
+    }
+    throw new Error(`Brave API ${res.status}: ${errText}`);
+  }
   const data = await res.json();
   incrementUsage('search', 1);
   return (data.web?.results || []);
@@ -4914,6 +4922,10 @@ async function braveSearchOnce(query, count = 20, offset = 0) {
 
 // 複数ページ取得して SEO 上位以外にもリーチする
 async function braveSearch(query, count = 10) {
+  // クォータ超過済みなら即bail (連発を防止)
+  if (window._braveQuotaExceeded) {
+    throw new Error('Brave API クォータ超過: 今月の検索回数を使い切りました');
+  }
   const pages = Math.max(1, Math.min(4, store.opts.bravePages || 2));
   if (pages === 1) return await braveSearchOnce(query, count, 0);
   const all = [];
@@ -5838,7 +5850,11 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
       console.warn('top verification failed', e);
     }
   }
-  onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
+  if (window._braveQuotaExceeded && totalValidated === 0) {
+    onProgress?.(`⚠ Brave API クォータ超過のため検索できません。https://api-dashboard.search.brave.com/app/dashboard でプラン確認・アップグレード推奨。今月分は月末に自動リセット。`);
+  } else {
+    onProgress?.(`✓ 全完了。${totalValidated}社追加（検索${stats.totalResults}件、ノイズ除外${stats.excluded}、重複${stats.duped}、非法人${queryCandidates_count(stats, found.length, totalValidated)}）`);
+  }
   return found;
 }
 
