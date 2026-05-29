@@ -2650,7 +2650,7 @@ JSONのみで返答:
 
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-4-8',
       max_tokens: 2000,
       thinking: { type: 'enabled', budget_tokens: 4000 },
       temperature: 1.0,
@@ -2868,7 +2868,7 @@ JSONのみで返答:
     const text = await callClaude({
       system: 'B2B営業のリードジェネレーション戦略アナリスト',
       prompt,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-4-8',
       max_tokens: 2500,
       thinking: { type: 'enabled', budget_tokens: 5000 },
       temperature: 1.0,
@@ -2947,7 +2947,7 @@ JSONのみで返答:
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-4-8',
       max_tokens: 2500,
       thinking: { type: 'enabled', budget_tokens: 6000 },
       temperature: 1.0,
@@ -3828,7 +3828,7 @@ JSONのみで返答:
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-4-8',
       max_tokens: 4000,
       thinking: { type: 'enabled', budget_tokens: 8000 },
       temperature: 1.0,
@@ -5215,7 +5215,7 @@ ${qualityMode ? '15〜20個' : '6〜10個'}の互いに異なる切り口のク�
 ["クエリ1", "クエリ2", ...]`;
 
     const callOpts = qualityMode
-      ? { model: 'claude-opus-4-7', max_tokens: 4000, thinking: { type: 'enabled', budget_tokens: 5000 }, temperature: 1.0 }
+      ? { model: 'claude-opus-4-8', max_tokens: 4000, thinking: { type: 'enabled', budget_tokens: 5000 }, temperature: 1.0 }
       : { max_tokens: 800 };
 
     const text = await callClaude({ system: sys, prompt, ...callOpts });
@@ -5530,7 +5530,7 @@ ${buildLearningContext()}
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-4-8',
       max_tokens: 4000,
       thinking: { type: 'enabled', budget_tokens: 6000 },
       temperature: 1.0,
@@ -6236,7 +6236,7 @@ JSONのみ返答:
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-7',
+      model: 'claude-opus-4-8',
       max_tokens: 3000,
       thinking: { type: 'enabled', budget_tokens: 6000 },
       temperature: 1.0,
@@ -6328,7 +6328,7 @@ async function enrichCompanyDeep(c, productText) {
   const collectedTexts = [];
   const mergeFromHTML = (html, url) => {
     if (!html) return;
-    collectedTexts.push(htmlToText(html).slice(0, 2000));
+    collectedTexts.push(htmlToText(html).slice(0, 5000));
     const ext = extractFromHTML(html, url);
     if (!ext) return;
     if (ext.name && /(株式会社|合同会社|有限会社|医療法人|社会福祉法人|NPO法人|一般社団法人|学校法人)/.test(ext.name)) {
@@ -6398,9 +6398,9 @@ async function enrichCompanyDeep(c, productText) {
 
   // AI評価(多段階パイプライン) - 会社名・電話・本社所在地のT/F判定 + 深い適合度評価
   if (productText && (store.opts.aiKey || store.opts.braveProxy) && collectedTexts.length > 0) {
-    // 品質モード時はHPテキストをより多く渡す(6KBまで)
+    // 品質モード時はHPテキストを大量に渡す(Opus 4.8 の1Mコンテキスト活用、25KBまで)
     const isHigh = store.opts.qualityMode !== false;
-    const hpText = collectedTexts.join('\n').slice(0, isHigh ? 8000 : 3500);
+    const hpText = collectedTexts.join('\n').slice(0, isHigh ? 25000 : 3500);
     // 活動性シグナル(廃業/最近の更新/採用の有無)
     const activeness = detectActivenessSignals(hpText);
     best.activeness = activeness.active;
@@ -7037,7 +7037,7 @@ function detectActivenessSignals(hpText) {
 // 真の信頼性が必要な場合のみ呼ぶ (コストは概ね 2倍)
 async function aiScoreStage3Ensemble(company, productText, hpText, stage1, houjin) {
   const [opus, sonnet] = await Promise.all([
-    aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-opus-4-7').catch(() => null),
+    aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-opus-4-8').catch(() => null),
     aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-sonnet-4-6').catch(() => null),
   ]);
   if (!opus && !sonnet) return null;
@@ -7093,7 +7093,7 @@ ${officialAddrLine}
 - HP説明: ${(company.description || '').slice(0, 300)}
 
 # HPテキスト全文(精読してください)
-${(hpText || '').slice(0, 6000)}
+${(hpText || '').slice(0, 25000)}
 
 ${buildFewShotFromFeedback(productText, 3)}
 ${buildLearningContext()}
@@ -7176,13 +7176,13 @@ ${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
 }`;
 
   try {
-    // Opus 4.7 + extended thinking (深い推論)
+    // Opus 4.8 + extended thinking (深い推論)
     // アダプティブ思考予算: HP テキストが大きい場合や stage1 が borderline (40-70)
     // の時はより多くのthinking budget を使う
     let budget = 8000;
     if (hpText && hpText.length > 5000) budget = 12000;
     if (stage1 && stage1.score >= 40 && stage1.score <= 70) budget = 14000;
-    const useModel = modelOverride || 'claude-opus-4-7';
+    const useModel = modelOverride || 'claude-opus-4-8';
     const text = await callClaude({
       system: sys,
       prompt,

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260516a">
+<link rel="stylesheet" href="style.css?v=20260516b">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -157,7 +157,7 @@
       <select id="opt-ai-model">
         <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価）</option>
         <option value="claude-sonnet-4-6">Sonnet 4.6（バランス）</option>
-        <option value="claude-opus-4-7">Opus 4.7（高精度）</option>
+        <option value="claude-opus-4-8">Opus 4.8（最高精度）</option>
       </select>
       <button class="side-btn" id="ai-test">接続テスト</button>
       <div id="ai-status" class="empty">未接続</div>
@@ -226,7 +226,7 @@
             <select id="ma-ai-model">
               <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価）推奨</option>
               <option value="claude-sonnet-4-6">Sonnet 4.6（バランス）</option>
-              <option value="claude-opus-4-7">Opus 4.7（高精度・高コスト）</option>
+              <option value="claude-opus-4-8">Opus 4.8（最高精度・高コスト）</option>
             </select>
           </label>
           <label class="kv" style="flex-direction:column;align-items:stretch"><span>デフォルト検索取得ページ数</span>
@@ -371,7 +371,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516a</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516b (Opus 4.8)</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -1248,9 +1248,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260516a"></script>
-<script type="module" src="firebase-sync.js?v=20260516a"></script>
-<script src="data/regions.js?v=20260516a"></script>
-<script src="app.js?v=20260516a"></script>
+<script src="firebase-config.js?v=20260516b"></script>
+<script type="module" src="firebase-sync.js?v=20260516b"></script>
+<script src="data/regions.js?v=20260516b"></script>
+<script src="app.js?v=20260516b"></script>
 </body>
 </html>
