@@ -1140,7 +1140,7 @@ function renderRow(c) {
         ${c.houjin_bangou ? `<div class="meta-tag" title="国税庁登記情報で確認済み">🆔 ${c.houjin_bangou}</div>` : ''}
         ${c.houjin_not_registered ? `<div class="meta-tag warn" title="国税庁に登記なし(任意団体・個人事業の可能性)">⚠ 未登記</div>` : ''}
         ${c._used_deep_eval ? `<div class="meta-tag good" title="Opus + 拡張思考で深く評価">🧠 Deep</div>` : ''}
-        ${c._reranked ? `<div class="meta-tag good" title="最終リランキング適用">🏆 Reranked</div>` : ''}
+        ${c.ai_tier ? `<div class="meta-tag tier-${c.ai_tier}" title="相対比較ティア (A=本命/D=非推奨): ${c.ai_rerank_reason||''}">${c.ai_tier}ランク</div>` : (c._reranked ? `<div class="meta-tag good" title="最終リランキング適用">🏆 Reranked</div>` : '')}
         ${c.activeness === 'inactive' ? `<div class="meta-tag warn" title="廃業・事業終了シグナル検出">💤 活動停止?</div>` : ''}
         ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
         ${c.is_competitor ? `<div class="meta-tag warn" title="競合企業(同種商材を販売)・架電厳禁: ${c.competitor_evidence||''}" style="background:rgba(220,0,0,.1);color:var(--danger);border-color:var(--danger)">⛔ 競合</div>` : ''}
@@ -6016,8 +6016,8 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   // 全候補を一覧して相対的に並び替え、calibration ズレを補正
   if (store.opts.qualityMode !== false && found.length >= 5) {
     try {
-      onProgress?.(`🧠 最終リランキング中(Top${Math.min(30, found.length)}社を相対比較)…`);
-      await rerankTopCandidates(productText, found.slice(0, 30));
+      onProgress?.(`🧠 最終リランキング中(Top${Math.min(50, found.length)}社を相対比較)…`);
+      await rerankTopCandidates(productText, found.slice(0, 50));
       rescoreFlush();
       saveStore();
     } catch (e) {
@@ -6207,41 +6207,59 @@ async function verifyTopByCrossSource(topCompanies, onProgress) {
 // 「個別評価」だけでは calibration がブレるので、最後に全体俯瞰でランキングを正す
 async function rerankTopCandidates(productText, topCompanies) {
   if (!topCompanies || topCompanies.length < 2) return;
-  const sys = `あなたはB2B営業のシニアアカウントエグゼクティブです。
-複数の候補企業を商材適合度の観点から相対的に比較し、ランキングと相対スコア(0-100)を返してください。
-個別評価ではなく、「この中で誰に最初に架電すべきか」を判断します。JSONのみ返答。`;
+  // Opus 4.8 の大コンテキスト+高度な比較判断を活かし、全社を1度に並べて
+  // 「相対的に」採点。個別評価が全部70点付近に寄る問題を解消し、差を強制的に出す。
+  const sys = `あなたは日本トップクラスのB2B営業ストラテジストです。
+複数の候補企業を一望し、商材への適合度で「相対的に」格付けします。
+重要: 個別に見ると全部それなりに見えるが、横に並べれば必ず優劣がつきます。
+あなたの仕事は遠慮なく差をつけ、本当に価値ある上澄みと、惰性で残った"水増し候補"を
+はっきり分離することです。スコアの団子(全部同じ点)は最も価値が低い回答です。`;
 
   const list = topCompanies.map((c, i) => {
-    const sig = (c.ai_buying_signals || []).slice(0,3).join('・') || 'なし';
+    const sig = (c.ai_buying_signals || []).slice(0,4).join('・') || 'なし';
     const evidence = c.ai_fit_evidence || 'なし';
-    return `${i+1}. ${c.name} (${c.industry||'?'} / ${c.prefecture||'?'}${c.city||''}) 暫定${c.ai_score||0}点
-   根拠:${evidence} シグナル:${sig}`;
+    const cites = Array.isArray(c.ai_fit_citations) && c.ai_fit_citations.length
+      ? c.ai_fit_citations.slice(0,2).map(x=>`「${(x.quote||'').slice(0,40)}」`).join(' ') : '';
+    const risks = (c.ai_risks||[]).slice(0,2).join('・');
+    const dims = c.ai_dimensions ? `[業種${c.ai_dimensions.industry_match||0}/規模${c.ai_dimensions.size_match||0}/タイミング${c.ai_dimensions.timing_signal||0}/根拠${c.ai_dimensions.evidence_strength||0}]` : '';
+    return `${i+1}. ${c.name} (${c.industry||'?'} / ${c.prefecture||'?'}${c.city||''} / ${c.employees||'?'}名) 暫定${c.ai_score||0}点 ${dims}
+   適合根拠:${evidence}
+   購買シグナル:${sig}${cites?'\n   HP引用:'+cites:''}${risks?'\n   懸念:'+risks:''}`;
   }).join('\n');
 
   const prompt = `# 商材
 ${productText}
+${buildLearningContext()}
 
-# 候補${topCompanies.length}社 (個別評価済)
+# 候補${topCompanies.length}社 (個別評価済み・暫定スコア付き)
 ${list}
 
 # タスク
-これら全社を相対比較して、最も購買確度が高い順に並び替え、各社の最終スコアを0-100で付け直してください。
-- 個別評価のばらつきや過剰評価/過小評価を是正
-- 商材の購買決定論理から「この中で誰が一番買いそうか」を厳密に
-- スコアは相対分布(トップから順次下がる、横並びは避ける)
+全${topCompanies.length}社を横並びで比較し、商材を「実際に買う確度」で相対採点してください。
+
+## 採点ルール (厳守)
+1. **必ず差をつける**: 上位と下位で最低40点は開ける。全社が同じような点になるのは禁止
+2. **ティア分類**:
+   - tier "A" (85-100): 今すぐ架電すべき本命。明確な購買根拠あり
+   - tier "B" (60-84): 有望。条件次第で商談化
+   - tier "C" (35-59): 可能性はあるが優先度低
+   - tier "D" (0-34): 水増し候補・ミスマッチ。架電非推奨
+3. **上位は絞る**: A は全体の2割以内が目安。安易に高得点を乱発しない
+4. **根拠の質で差をつける**: HP引用や具体的購買シグナルがある社を上に、業種一致だけの社を下に
+5. 学習パターン(あれば)に合致する社を加点、外れる社を減点
 
 JSONのみ返答:
-{"ranking": [{"i": 1, "final_score": 92, "reason": "理由20字"}, ...]}`;
+{"ranking": [{"i": 1, "final_score": 92, "tier": "A", "reason": "なぜこの順位か30字"}, ...]}`;
 
   try {
     const text = await callClaude({
       system: sys, prompt,
       model: 'claude-opus-4-8',
-      max_tokens: 3000,
-      thinking: { type: 'enabled', budget_tokens: 6000 },
+      max_tokens: 6000,
+      thinking: { type: 'enabled', budget_tokens: 12000 },
       temperature: 1.0,
     });
-    incrementUsage('ai', 5); // 大きいプロンプト + thinking
+    incrementUsage('ai', 6); // 大きいプロンプト + 高budget thinking
     // 末尾JSON抽出
     const matches = [...text.matchAll(/\{[\s\S]*?"ranking"[\s\S]*?\]\s*\}/g)];
     let obj = null;
@@ -6258,6 +6276,7 @@ JSONのみ返答:
         c.ai_score_pre_rerank = c.ai_score;
         c.ai_score = newScore;
         c.ai_rerank_reason = r.reason || '';
+        c.ai_tier = r.tier || '';
         c._reranked = true;
         // store に反映
         const target = store.importedCompanies.find(x => x.id === c.id);
@@ -6265,6 +6284,7 @@ JSONのみ返答:
           target.ai_score_pre_rerank = c.ai_score_pre_rerank;
           target.ai_score = newScore;
           target.ai_rerank_reason = r.reason || '';
+          target.ai_tier = r.tier || '';
           target._reranked = true;
         }
       }

@@ -1760,3 +1760,9 @@ button.danger {
 
 /* 既存ヘッダの lead 文章は左カラムに置き換えたので非表示 */
 #tab-discover > header { display: none; }
+
+/* リランキング ティアバッジ */
+.meta-tag.tier-A { background: rgba(21,128,61,.15); color: var(--good); border-color: var(--good); font-weight: 700; }
+.meta-tag.tier-B { background: rgba(59,130,246,.12); color: var(--accent); border-color: var(--accent); }
+.meta-tag.tier-C { background: var(--bg); color: var(--muted); }
+.meta-tag.tier-D { background: rgba(120,113,108,.1); color: var(--low); border-color: var(--low); text-decoration: line-through; }
