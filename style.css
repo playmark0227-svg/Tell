@@ -1779,3 +1779,212 @@ button.danger {
   0%, 100% { box-shadow: 0 0 0 0 rgba(21,128,61,.35); }
   50% { box-shadow: 0 0 0 6px rgba(21,128,61,0); }
 }
+
+/* ════════════════════════════════════════════
+   Design System v2 — Modern SaaS look
+   (インディゴ→バイオレット グラデーション基調)
+   ════════════════════════════════════════════ */
+
+:root {
+  --accent: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-grad: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --bg: #f0f1f5;
+  --panel: #ffffff;
+  --panel-elev: #fafafc;
+  --border: #e4e4ec;
+  --border-soft: #ededf2;
+  --text: #17171f;
+  --muted: #71717a;
+  --good: #059669;
+  --mid: #d97706;
+  --low: #a1a1aa;
+  --danger: #dc2626;
+  --sidebar-bg: #13131c;
+  --sidebar-fg: #e7e7ee;
+  --sidebar-muted: #9b9ba8;
+  --sidebar-border: #232330;
+  --shadow-sm: 0 1px 2px rgba(20,20,43,.06), 0 0 0 1px rgba(20,20,43,.025);
+  --shadow-md: 0 6px 20px rgba(20,20,43,.09);
+}
+
+[data-theme="dark"] {
+  --bg: #0f0f15;
+  --panel: #17171f;
+  --panel-elev: #131319;
+  --border: #2a2a38;
+  --border-soft: #20202c;
+  --text: #ececf1;
+  --muted: #9b9ba8;
+  --accent: #818cf8;
+  --accent-2: #a78bfa;
+  --accent-grad: linear-gradient(135deg, #818cf8, #a78bfa);
+  --good: #34d399;
+  --mid: #fbbf24;
+  --low: #71717a;
+  --danger: #f87171;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.5);
+}
+
+/* ---- ベース ---- */
+::selection { background: rgba(99,102,241,.22); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: #c9c9d6; border-radius: 8px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: #ababbe; background-clip: padding-box; border: 2px solid transparent; }
+[data-theme="dark"] *::-webkit-scrollbar-thumb { background: #3a3a4c; background-clip: padding-box; border: 2px solid transparent; }
+
+button, .top-tab, .pipeline-card, .view-tab, .side-btn, .sample-btn {
+  transition: all .18s ease;
+}
+
+/* ---- トップナビ ---- */
+.top-nav {
+  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border-soft);
+  height: 58px;
+}
+.brand-mark {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-grad);
+  border-radius: 9px;
+  font-size: 16px;
+  box-shadow: 0 3px 10px rgba(99,102,241,.4);
+}
+.brand-name { font-weight: 800; letter-spacing: -0.6px; }
+.brand-tag {
+  background: var(--accent-grad);
+  box-shadow: 0 1px 4px rgba(99,102,241,.3);
+  letter-spacing: .3px;
+}
+.top-tab { font-weight: 600; border-radius: 9px; }
+.top-tab.active {
+  background: var(--accent-grad);
+  box-shadow: 0 3px 12px rgba(99,102,241,.38);
+}
+
+/* ---- パネル / カード ---- */
+.panel { border-radius: 14px; border: 1px solid var(--border-soft); }
+.card { border-radius: 13px; }
+.modal { background: rgba(13,13,30,.55); backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); }
+.modal-content { border-radius: 18px; border: 1px solid var(--border-soft); }
+
+/* ---- ボタン ---- */
+button.primary {
+  background: var(--accent-grad);
+  box-shadow: 0 2px 10px rgba(99,102,241,.35);
+  border-radius: 8px;
+  font-weight: 600;
+}
+button.primary:hover { opacity: 1; box-shadow: 0 5px 18px rgba(99,102,241,.45); transform: translateY(-1px); }
+.big-cta {
+  background: var(--accent-grad);
+  border-radius: 13px;
+  box-shadow: 0 5px 18px rgba(99,102,241,.38);
+}
+.big-cta:hover {
+  background: linear-gradient(135deg, #5558e8, #7c4fef);
+  box-shadow: 0 8px 26px rgba(99,102,241,.5);
+}
+.onboard-btn { border-radius: 8px; }
+
+/* ---- スコアピル ---- */
+.score {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
+  border-radius: 10px;
+}
+.score.good { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 2px 8px rgba(16,185,129,.3); }
+.score.mid  { background: linear-gradient(135deg, #f59e0b, #d97706); box-shadow: 0 2px 8px rgba(245,158,11,.3); }
+.score.low  { background: linear-gradient(135deg, #a1a1aa, #71717a); }
+
+/* ---- テーブル ---- */
+tbody tr:hover { background: rgba(99,102,241,.045); }
+th { letter-spacing: .06em; }
+.view-tab.active { border-bottom-color: var(--accent); }
+
+/* ---- KPI カード ---- */
+.crm-kpi {
+  position: relative; overflow: hidden;
+  border-radius: 13px;
+}
+.crm-kpi::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--accent-grad);
+}
+.crm-kpi-num { font-variant-numeric: tabular-nums; letter-spacing: -1.5px; }
+
+/* ---- 品質サマリー数字をグラデ文字に ---- */
+.qs-num {
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.qs-num.good {
+  background: linear-gradient(135deg, #10b981, #059669);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.qs-num.warn {
+  background: linear-gradient(135deg, #f87171, #dc2626);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ---- チャート / ファネル ---- */
+.funnel-bar-fill { background: linear-gradient(90deg, #6366f1, #8b5cf6); }
+.bar-chart-bar { border-radius: 4px; }
+
+/* ---- 入力フォーカスリング ---- */
+textarea:focus, input[type="text"]:focus, input[type="password"]:focus,
+input[type="number"]:focus, input[type="email"]:focus, select:focus,
+.input:focus, .select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+}
+
+/* ---- サイドバー ---- */
+.sidebar { background: linear-gradient(180deg, #15151f 0%, #101019 100%); }
+.sidebar-header h1 { letter-spacing: -0.5px; }
+.side-head .badge { background: var(--accent-grad); }
+.side-btn { border-radius: 8px; }
+.side-btn:hover { border-color: rgba(129,140,248,.45); }
+.dash-card { border-radius: 9px; }
+.dash-value {
+  background: linear-gradient(135deg, #c7d2fe, #e9d5ff);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ---- パイプライン ---- */
+.pipeline-card { border-radius: 9px; }
+.pipeline-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px rgba(99,102,241,.16);
+  transform: translateY(-2px);
+}
+.pipeline-card-value { font-variant-numeric: tabular-nums; }
+
+/* ---- ページタイトル ---- */
+.page-header h1 { letter-spacing: -0.8px; }
+.discover-title { letter-spacing: -0.5px; }
+
+/* ---- バッジを少しソフトに ---- */
+.meta-tag { border-radius: 6px; font-weight: 500; }
+
+/* ---- 一括アクションバー ---- */
+#bulk-actions {
+  background: var(--accent-grad) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 14px rgba(99,102,241,.35);
+}
