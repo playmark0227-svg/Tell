@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner Hello - ハローワーク特化版 - B2B営業リスト</title>
-<link rel="stylesheet" href="../style.css?v=20260516c_hw">
+<link rel="stylesheet" href="../style.css?v=20260516d_hw">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -155,9 +155,10 @@
       <input type="password" id="opt-ai-key" placeholder="sk-ant-...">
       <label class="side-label" style="margin-top:8px;">モデル</label>
       <select id="opt-ai-model">
-        <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価）</option>
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安価・推奨）</option>
         <option value="claude-sonnet-4-6">Sonnet 4.6（バランス）</option>
-        <option value="claude-opus-4-8">Opus 4.8（最高精度）</option>
+        <option value="claude-opus-4-8">Opus 4.8（高精度・高コスト）</option>
+        <option value="claude-fable-5">Fable 5（最高知能・高コスト）</option>
       </select>
       <button class="side-btn" id="ai-test">接続テスト</button>
       <div id="ai-status" class="empty">未接続</div>
@@ -493,10 +494,10 @@
   </div>
 </div>
 
-<script src="../firebase-config.js?v=20260516c_hw"></script>
-<script type="module" src="../firebase-sync.js?v=20260516c_hw"></script>
-<script src="../data/regions.js?v=20260516c_hw"></script>
+<script src="../firebase-config.js?v=20260516d_hw"></script>
+<script type="module" src="../firebase-sync.js?v=20260516d_hw"></script>
+<script src="../data/regions.js?v=20260516d_hw"></script>
 <script>window.HELLOWORK_MODE = true;</script>
-<script src="../app.js?v=20260516c_hw"></script>
+<script src="../app.js?v=20260516d_hw"></script>
 </body>
 </html>

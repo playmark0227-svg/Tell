@@ -1144,7 +1144,7 @@ function renderRow(c) {
         ${c.activeness === 'inactive' ? `<div class="meta-tag warn" title="廃業・事業終了シグナル検出">💤 活動停止?</div>` : ''}
         ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
         ${c.is_competitor ? `<div class="meta-tag warn" title="競合企業(同種商材を販売)・架電厳禁: ${c.competitor_evidence||''}" style="background:rgba(220,0,0,.1);color:var(--danger);border-color:var(--danger)">⛔ 競合</div>` : ''}
-        ${c._ensemble ? `<div class="meta-tag good" title="Opus(${c._ensemble.opus_score})+Sonnet(${c._ensemble.sonnet_score})の合議 ${c._ensemble.disagree?'⚠ 評価が割れた':'一致'}">🎯 合議</div>` : ''}
+        ${c._ensemble ? `<div class="meta-tag good" title="Fable(${c._ensemble.primary_score ?? c._ensemble.opus_score})+Sonnet(${c._ensemble.secondary_score ?? c._ensemble.sonnet_score})の合議 ${c._ensemble.disagree?'⚠ 評価が割れた':'一致'}">🎯 合議</div>` : ''}
         ${c._verification === 'strong' ? `<div class="meta-tag good" title="外部${c.cross_source_count||0}サイトから言及・業界認知度高い">🌐 検証済</div>` : ''}
         ${c._verification === 'weak' ? `<div class="meta-tag warn" title="外部参照ほぼなし(新規/小規模/未公開法人の可能性)">⚠ 参照希薄</div>` : ''}
         ${c._sitemap_assisted ? `<div class="meta-tag" title="sitemap.xml を解析して情報密度高い独自ページを追加クロール">🗺 Sitemap</div>` : ''}
@@ -2650,7 +2650,7 @@ JSONのみで返答:
 
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 2000,
       thinking: { type: 'enabled', budget_tokens: 4000 },
       temperature: 1.0,
@@ -2868,7 +2868,7 @@ JSONのみで返答:
     const text = await callClaude({
       system: 'B2B営業のリードジェネレーション戦略アナリスト',
       prompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 2500,
       thinking: { type: 'enabled', budget_tokens: 5000 },
       temperature: 1.0,
@@ -2947,7 +2947,7 @@ JSONのみで返答:
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 2500,
       thinking: { type: 'enabled', budget_tokens: 6000 },
       temperature: 1.0,
@@ -3090,7 +3090,8 @@ function updateCrmCustomer(id, patch) {
   const cust = store.crm.customers.find(c => c.id === id);
   if (!cust) return null;
   // Stage 変更時はタイムスタンプ更新 + アクティビティ追加
-  if (patch.stage && patch.stage !== cust.stage) {
+  const stageChanged = patch.stage && patch.stage !== cust.stage;
+  if (stageChanged) {
     cust.activities.unshift({
       type: 'stage_change',
       t: Date.now(),
@@ -3101,6 +3102,10 @@ function updateCrmCustomer(id, patch) {
   Object.assign(cust, patch);
   logAction('crm_update', cust.name);
   saveStore();
+  // 受注/失注が記録されたら学習推奨ナッジを更新 (APIコスト 0)
+  if (stageChanged && ['won', 'lost'].includes(patch.stage)) {
+    setTimeout(maybeNudgeLearning, 0);
+  }
   return cust;
 }
 
@@ -3828,7 +3833,7 @@ JSONのみで返答:
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 4000,
       thinking: { type: 'enabled', budget_tokens: 8000 },
       temperature: 1.0,
@@ -3839,12 +3844,32 @@ JSONのみで返答:
     const obj = JSON.parse(m[0]);
     obj._analyzed_at = Date.now();
     obj._sample_counts = { won: won.length, lost: lost.length, meeting: meeting.length, rejected: rejected_phone.length };
+    obj._outcome_count = won.length + lost.length; // 学習推奨ナッジの基準値
     store.matchingLearnings = obj;
     saveStore();
     return obj;
   } catch (e) {
     console.warn('analyzeMatchingLearnings failed', e);
     return { error: e.message };
+  }
+}
+
+// 学習推奨ナッジ (API は叩かない・完全ゼロコスト)
+// 前回学習以降に受注/失注が2件以上増えていたら「🎓 AI学習を実行」ボタンを
+// 強調表示して再学習を促す。実行はユーザーのクリックに委ねる。
+function maybeNudgeLearning() {
+  const btn = document.getElementById('learn-matching-btn');
+  if (!btn || btn.disabled) return;
+  ensureCrm();
+  const outcomes = store.crm.customers.filter(c => ['won', 'lost'].includes(c.stage)).length;
+  const lastCount = store.matchingLearnings?._outcome_count || 0;
+  if (outcomes >= 2 && outcomes - lastCount >= 2) {
+    btn.classList.add('learn-nudge');
+    btn.textContent = '🎓 AI学習を実行（新しい成果データあり・推奨）';
+    btn.title = `前回学習以降に受注/失注が${outcomes - lastCount}件増えています。再学習すると次回検索の精度が上がります`;
+  } else {
+    btn.classList.remove('learn-nudge');
+    btn.textContent = '🎓 AI学習を実行';
   }
 }
 
@@ -5215,7 +5240,7 @@ ${qualityMode ? '15〜20個' : '6〜10個'}の互いに異なる切り口のク�
 ["クエリ1", "クエリ2", ...]`;
 
     const callOpts = qualityMode
-      ? { model: 'claude-opus-4-8', max_tokens: 4000, thinking: { type: 'enabled', budget_tokens: 5000 }, temperature: 1.0 }
+      ? { model: 'claude-fable-5', max_tokens: 4000, thinking: { type: 'enabled', budget_tokens: 5000 }, temperature: 1.0 }
       : { max_tokens: 800 };
 
     const text = await callClaude({ system: sys, prompt, ...callOpts });
@@ -5530,7 +5555,7 @@ ${buildLearningContext()}
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 4000,
       thinking: { type: 'enabled', budget_tokens: 6000 },
       temperature: 1.0,
@@ -6254,7 +6279,7 @@ JSONのみ返答:
   try {
     const text = await callClaude({
       system: sys, prompt,
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 6000,
       thinking: { type: 'enabled', budget_tokens: 12000 },
       temperature: 1.0,
@@ -6793,7 +6818,7 @@ async function aiScoreCompany(company, productText, hpText, options = {}) {
   }
 
   // Stage 3: Opus + extended thinking で深い適合度評価 + 引用必須
-  // ensembleMode 時は Opus + Sonnet の合議で更に信頼性UP
+  // ensembleMode 時は Fable 5 + Sonnet の合議で更に信頼性UP
   const useEnsemble = store.opts.ensembleMode === true;
   try {
     const stage3 = useEnsemble
@@ -7053,36 +7078,36 @@ function detectActivenessSignals(hpText) {
   return { active: activeness, signals };
 }
 
-// マルチモデルアンサンブル: Opus と Sonnet の両方で Stage3 を実行して合議
+// マルチモデルアンサンブル: Fable 5 と Sonnet 4.6 の両方で Stage3 を実行して合議
 // 真の信頼性が必要な場合のみ呼ぶ (コストは概ね 2倍)
 async function aiScoreStage3Ensemble(company, productText, hpText, stage1, houjin) {
-  const [opus, sonnet] = await Promise.all([
-    aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-opus-4-8').catch(() => null),
+  const [primary, secondary] = await Promise.all([
+    aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-fable-5').catch(() => null),
     aiScoreStage3Deep(company, productText, hpText, stage1, houjin, 'claude-sonnet-4-6').catch(() => null),
   ]);
-  if (!opus && !sonnet) return null;
-  if (!opus) return sonnet;
-  if (!sonnet) return opus;
+  if (!primary && !secondary) return null;
+  if (!primary) return secondary;
+  if (!secondary) return primary;
 
-  // 合議: 重み付き平均 (Opus 60%, Sonnet 40%)
-  const avgScore = Math.round(opus.score * 0.6 + sonnet.score * 0.4);
+  // 合議: 重み付き平均 (Fable 5 60%, Sonnet 4.6 40%)
+  const avgScore = Math.round(primary.score * 0.6 + secondary.score * 0.4);
   // 大きく食い違う(20点以上)→ 確信度を下げる
-  const disagree = Math.abs(opus.score - sonnet.score) >= 20;
+  const disagree = Math.abs(primary.score - secondary.score) >= 20;
   // 競合フラグは両方一致したときのみ採用
-  const competitorConsensus = opus.is_competitor && sonnet.is_competitor;
+  const competitorConsensus = primary.is_competitor && secondary.is_competitor;
   // citations は両方からマージ
-  const mergedCitations = [...(opus.fit_citations || []), ...(sonnet.fit_citations || [])].slice(0, 6);
+  const mergedCitations = [...(primary.fit_citations || []), ...(secondary.fit_citations || [])].slice(0, 6);
   // buying_signals もマージ
-  const mergedSignals = [...new Set([...(opus.buying_signals || []), ...(sonnet.buying_signals || [])])].slice(0, 8);
+  const mergedSignals = [...new Set([...(primary.buying_signals || []), ...(secondary.buying_signals || [])])].slice(0, 8);
 
   return {
-    ...opus,
+    ...primary,
     score: avgScore,
-    confidence: disagree ? 'low' : opus.confidence,
+    confidence: disagree ? 'low' : primary.confidence,
     is_competitor: competitorConsensus,
     fit_citations: mergedCitations,
     buying_signals: mergedSignals,
-    _ensemble: { opus_score: opus.score, sonnet_score: sonnet.score, disagree },
+    _ensemble: { primary_score: primary.score, secondary_score: secondary.score, disagree },
   };
 }
 
@@ -7196,13 +7221,14 @@ ${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
 }`;
 
   try {
-    // Opus 4.8 + extended thinking (深い推論)
+    // 個別評価はコスト最適化のため Sonnet (1社ごとに走る高頻度処理のため)
+    // 最終的な相対比較・選別は Fable 5 のリランキングが担当する
     // アダプティブ思考予算: HP テキストが大きい場合や stage1 が borderline (40-70)
     // の時はより多くのthinking budget を使う
     let budget = 8000;
     if (hpText && hpText.length > 5000) budget = 12000;
     if (stage1 && stage1.score >= 40 && stage1.score <= 70) budget = 14000;
-    const useModel = modelOverride || 'claude-opus-4-8';
+    const useModel = modelOverride || 'claude-sonnet-4-6';
     const text = await callClaude({
       system: sys,
       prompt,
@@ -7211,8 +7237,9 @@ ${(store.opts.knownCompetitors && store.opts.knownCompetitors.length > 0) ?
       thinking: { type: 'enabled', budget_tokens: budget },
       temperature: 1.0, // extended thinking時は1.0が必須
     });
-    // Opus は Sonnet より概ね 3-5x のコスト
-    const costMultiplier = useModel.includes('opus') ? (budget >= 12000 ? 4 : 3) : 1;
+    // コスト概算: Fable/Opus ≈ 3-4単位, Sonnet(thinking付き) ≈ 2単位, その他 1単位
+    const costMultiplier = /fable|opus/.test(useModel) ? (budget >= 12000 ? 4 : 3)
+      : /sonnet/.test(useModel) ? 2 : 1;
     incrementUsage('ai', costMultiplier);
     // 最後の JSON ブロックを抽出
     const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
@@ -7825,6 +7852,8 @@ async function init() {
   setupSettingsPanel();
   // 「商談化」status を CRM に自動連動
   hookStatusToCrm();
+  // 起動時に学習推奨ナッジ判定 (APIコスト 0)
+  maybeNudgeLearning();
   renderBillingPanel();
   // Firebase 連携
   const wireFirebase = () => {
@@ -8169,6 +8198,7 @@ ${(result.rejection_patterns||[]).slice(0,2).map(p=>`・${p}`).join('\n')}
     } finally {
       lmBtn.disabled = false;
       lmBtn.textContent = '🎓 AI学習を実行';
+      maybeNudgeLearning(); // 学習済みならナッジ解除、未消化分が残っていれば再表示
     }
   });
   const epBtn = document.getElementById('evolve-profile-btn');

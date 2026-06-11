@@ -1766,3 +1766,16 @@ button.danger {
 .meta-tag.tier-B { background: rgba(59,130,246,.12); color: var(--accent); border-color: var(--accent); }
 .meta-tag.tier-C { background: var(--bg); color: var(--muted); }
 .meta-tag.tier-D { background: rgba(120,113,108,.1); color: var(--low); border-color: var(--low); text-decoration: line-through; }
+
+/* 学習推奨ナッジ (新しい受注/失注データがあるときボタンを強調) */
+.learn-nudge {
+  background: rgba(21,128,61,.12) !important;
+  border-color: var(--good) !important;
+  color: var(--good) !important;
+  font-weight: 700;
+  animation: learnPulse 2s ease-in-out infinite;
+}
+@keyframes learnPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(21,128,61,.35); }
+  50% { box-shadow: 0 0 0 6px rgba(21,128,61,0); }
+}
