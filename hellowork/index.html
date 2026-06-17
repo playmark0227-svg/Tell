@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner Hello - ハローワーク特化版 - B2B営業リスト</title>
-<link rel="stylesheet" href="../style.css?v=20260516g_hw">
+<link rel="stylesheet" href="../style.css?v=20260516h_hw">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -244,11 +244,11 @@
   </section>
 
   <section class="panel setup-panel">
-    <h2>1. 検索設定</h2>
+    <h2>🔎 検索設定</h2>
     <p class="muted" style="margin-top:-8px;margin-bottom:14px;">商材と絞り込み条件をまとめて設定して、最後に1クリックで検索開始します。</p>
 
     <div class="setup-group">
-      <div class="setup-label">① 商材</div>
+      <div class="setup-label">📦 商材</div>
       <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え"></textarea>
       <div class="action-row" style="margin-top:8px;">
         <button id="chat-mode-btn" class="ghost small">🤖 AIと対話して商材を詰める</button>
@@ -280,7 +280,7 @@
     </div>
 
     <div class="setup-group" id="filter-section">
-      <div class="setup-label">② ターゲット絞り込み（任意）</div>
+      <div class="setup-label">🎯 ターゲット絞り込み<span style="color:var(--muted);font-weight:normal;font-size:11px;margin-left:6px">任意</span></div>
       <details class="samples-toggle">
         <summary>💬 LINE等のメッセージから条件を抽出</summary>
         <div style="margin-top:8px;">
@@ -340,17 +340,17 @@
   </section>
 
   <section class="panel" id="classification-section" hidden>
-    <h2>2. 商材判別</h2>
+    <h2>🏷️ 商材判別</h2>
     <div id="classification-display"></div>
   </section>
 
   <section class="panel" id="strategy-section" hidden>
-    <h2>3. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
+    <h2>🧭 戦略分析 <span class="muted">— 誰が買うか</span></h2>
     <div id="strategy-display"></div>
   </section>
 
   <section class="panel" id="icp-section" hidden>
-    <h2>4. 理想顧客プロファイル（ICP）</h2>
+    <h2>🎯 理想顧客プロファイル（ICP）</h2>
     <div id="icp-display"></div>
   </section>
 
@@ -366,7 +366,7 @@
 
   <section class="panel" id="results-section" hidden>
     <div class="results-header">
-      <h2 style="margin:0;">5. 結果 <span id="result-count" class="muted"></span></h2>
+      <h2 style="margin:0;">📋 結果 <span id="result-count" class="muted"></span></h2>
       <div class="results-actions">
         <button id="export-results-inline" class="ghost small">📥 表示中をCSV出力</button>
         <button id="export-saved-inline" class="ghost small">⭐ 保存リストをCSV出力</button>
@@ -494,10 +494,10 @@
   </div>
 </div>
 
-<script src="../firebase-config.js?v=20260516g_hw"></script>
-<script type="module" src="../firebase-sync.js?v=20260516g_hw"></script>
-<script src="../data/regions.js?v=20260516g_hw"></script>
+<script src="../firebase-config.js?v=20260516h_hw"></script>
+<script type="module" src="../firebase-sync.js?v=20260516h_hw"></script>
+<script src="../data/regions.js?v=20260516h_hw"></script>
 <script>window.HELLOWORK_MODE = true;</script>
-<script src="../app.js?v=20260516g_hw"></script>
+<script src="../app.js?v=20260516h_hw"></script>
 </body>
 </html>

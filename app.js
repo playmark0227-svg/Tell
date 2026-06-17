@@ -1049,6 +1049,9 @@ function renderResults() {
   const tbody = document.querySelector('#results-table tbody');
   if (!tbody) return;
   const total = state.scored.length;
+  // 検索開始/結果表示時に右カラムの空状態ヒーローを非表示にする
+  const eh = document.getElementById('discover-empty');
+  if (eh) eh.style.display = total > 0 ? 'none' : '';
   renderQualitySummary(filtered);
   renderDashCharts(filtered);
 
@@ -8327,6 +8330,9 @@ async function init() {
     saveStore();
     const btn = document.getElementById('analyze-btn');
     const origText = btn.textContent;
+    // 検索開始時に右カラムの空状態ヒーローを即座に非表示
+    const ehStart = document.getElementById('discover-empty');
+    if (ehStart) ehStart.style.display = 'none';
     const updateBtn = () => {
       const total = getAllCompanies().length;
       btn.innerHTML = `⏸ 検索を停止（累計 ${total} 社・継続中…）`;

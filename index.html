@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260516g">
+<link rel="stylesheet" href="style.css?v=20260516h">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -373,7 +373,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516g (ローカルAIモード搭載)</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516h (UI仕上げ)</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -459,7 +459,7 @@ service cloud.firestore {
     <button class="top-tab active" data-tab="discover">🔍 発見・評価</button>
     <button class="top-tab" data-tab="crm">📒 顧客管理</button>
     <button class="top-tab" data-tab="dashboard">📊 ダッシュボード</button>
-    <button class="top-tab" data-tab="settings">⚙ 設定</button>
+    <button class="top-tab" data-tab="settings">⚙️ 設定</button>
   </div>
   <div class="top-nav-right">
     <span class="top-nav-user" id="top-nav-user"></span>
@@ -524,11 +524,11 @@ service cloud.firestore {
   </section>
 
   <section class="panel setup-panel">
-    <h2>1. 検索設定</h2>
+    <h2>🔎 検索設定</h2>
     <p class="muted" style="margin-top:-8px;margin-bottom:14px;">商材と絞り込み条件をまとめて設定して、最後に1クリックで検索開始します。</p>
 
     <div class="setup-group">
-      <div class="setup-label">① 商材</div>
+      <div class="setup-label">📦 商材</div>
       <textarea id="product-input" rows="3" placeholder="例：中小企業向けクラウド勤怠管理SaaS、月額3万円〜、紙のタイムカードからの置き換え"></textarea>
       <div class="action-row" style="margin-top:8px;">
         <button id="chat-mode-btn" class="ghost small">🤖 AIと対話して商材を詰める</button>
@@ -560,7 +560,7 @@ service cloud.firestore {
     </div>
 
     <div class="setup-group" id="filter-section">
-      <div class="setup-label">② ターゲット絞り込み（任意）</div>
+      <div class="setup-label">🎯 ターゲット絞り込み<span style="color:var(--muted);font-weight:normal;font-size:11px;margin-left:6px">任意</span></div>
       <details class="samples-toggle">
         <summary>💬 LINE等のメッセージから条件を抽出</summary>
         <div style="margin-top:8px;">
@@ -624,18 +624,36 @@ service cloud.firestore {
 <!-- 右カラム: 分析 + 結果テーブル (画面全体に拡張) -->
 <section class="discover-right">
 
+  <!-- 検索前の空状態プレースホルダー (検索結果が出たら自動非表示) -->
+  <div class="empty-hero" id="discover-empty">
+    <div class="empty-hero-illus">📡</div>
+    <h2>商材を入力して、最初の検索を始めましょう</h2>
+    <p>AIが商材を分析 → 理想顧客像(ICP)を生成 → 該当する企業をWeb・国税庁データから発見し、適合度順にスコアリングします。</p>
+    <div class="empty-hero-flow">
+      <div class="ehf-step"><div class="ehf-n">1</div><div class="ehf-t">商材を入力</div><div class="ehf-d">左の枠に売りたい商品/サービスを書く</div></div>
+      <div class="ehf-arrow">→</div>
+      <div class="ehf-step"><div class="ehf-n">2</div><div class="ehf-t">対象を絞る</div><div class="ehf-d">業種・地域・規模を指定（任意）</div></div>
+      <div class="ehf-arrow">→</div>
+      <div class="ehf-step"><div class="ehf-n">3</div><div class="ehf-t">検索開始</div><div class="ehf-d">紫のボタンをクリック</div></div>
+    </div>
+    <div class="empty-hero-tips">
+      <div class="eht"><span>💡</span><strong>ヒント</strong> 商材は「中小製造業向け勤怠SaaS」のように具体的に書くほど、ICPの精度が上がります</div>
+      <div class="eht"><span>⚡</span><strong>ローカルAIモード</strong> 設定タブからONにすれば、Claude API料金ゼロで評価できます</div>
+    </div>
+  </div>
+
   <section class="panel" id="classification-section" hidden>
-    <h2>2. 商材判別</h2>
+    <h2>🏷️ 商材判別</h2>
     <div id="classification-display"></div>
   </section>
 
   <section class="panel" id="strategy-section" hidden>
-    <h2>3. 戦略分析 <span class="muted">— 誰が買うか</span></h2>
+    <h2>🧭 戦略分析 <span class="muted">— 誰が買うか</span></h2>
     <div id="strategy-display"></div>
   </section>
 
   <section class="panel" id="icp-section" hidden>
-    <h2>4. 理想顧客プロファイル（ICP）</h2>
+    <h2>🎯 理想顧客プロファイル（ICP）</h2>
     <div id="icp-display"></div>
   </section>
 
@@ -651,7 +669,7 @@ service cloud.firestore {
 
   <section class="panel" id="results-section" hidden>
     <div class="results-header">
-      <h2 style="margin:0;">5. 結果 <span id="result-count" class="muted"></span></h2>
+      <h2 style="margin:0;">📋 結果 <span id="result-count" class="muted"></span></h2>
       <div class="results-actions">
         <button id="discover-similar-btn" class="ghost small" title="現在Top5に似た企業を追加発見">🔁 類似企業を追加発見</button>
         <button id="evolve-profile-btn" class="ghost small" title="商談化・DNC等の実績から商材プロファイル(ICP)をAIが進化させる">🧬 商材プロファイル進化</button>
@@ -1253,9 +1271,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260516g"></script>
-<script type="module" src="firebase-sync.js?v=20260516g"></script>
-<script src="data/regions.js?v=20260516g"></script>
-<script src="app.js?v=20260516g"></script>
+<script src="firebase-config.js?v=20260516h"></script>
+<script type="module" src="firebase-sync.js?v=20260516h"></script>
+<script src="data/regions.js?v=20260516h"></script>
+<script src="app.js?v=20260516h"></script>
 </body>
 </html>
