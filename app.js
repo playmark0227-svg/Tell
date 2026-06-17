@@ -1244,7 +1244,7 @@ const store = {
   billingHistory: [],
   // 課金設定(管理者がFirestore経由で全ユーザー共通設定として変更可)
   billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [], localAiMode: false },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [], localAiMode: false, parallelWorkers: 0 },
   localWeights: {}, // ローカル学習で得たキーワード重み (Claude不使用)
   localLearnedAt: 0,
   feedback: {}, // companyId -> { rating: 'good'|'bad'|null, score_correction, comment, t }
@@ -3666,6 +3666,16 @@ function renderSettingsPanel() {
   sync('settings-quality-mode', store.opts.qualityMode !== false);
   sync('settings-ensemble-mode', store.opts.ensembleMode === true);
   sync('settings-brave-pages', String(store.opts.bravePages || 2));
+  // 並列数: 'auto' or 数値
+  const pWorkers = store.opts.parallelWorkers;
+  sync('settings-parallel', typeof pWorkers === 'number' && pWorkers > 0 ? String(pWorkers) : 'auto');
+  // PCのコア情報を表示
+  const pd = document.getElementById('parallel-detected');
+  if (pd) {
+    const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || '?';
+    const eff = computeParallelWorkers();
+    pd.textContent = `検出: 論理コア${cores}個 / 現在の有効並列数: ${eff}社同時処理`;
+  }
   sync('settings-exclude-dnc', store.opts.excludeDnc);
   sync('settings-saved-only', store.opts.savedOnly);
   sync('settings-dark', store.opts.dark);
@@ -3690,6 +3700,18 @@ function setupSettingsPanel() {
   bindToggle('settings-ensemble-mode', 'ensembleMode');
   bindToggle('settings-brave-pages', 'bravePages', () => {
     store.opts.bravePages = parseInt(store.opts.bravePages, 10) || 2;
+  });
+  // 並列数: 'auto' (= null/0扱い) または 整数
+  const pEl = document.getElementById('settings-parallel');
+  if (pEl) pEl.addEventListener('change', () => {
+    const v = pEl.value;
+    store.opts.parallelWorkers = (v === 'auto') ? 0 : Math.max(2, Math.min(12, parseInt(v, 10) || 0));
+    saveStore();
+    const pd = document.getElementById('parallel-detected');
+    if (pd) {
+      const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || '?';
+      pd.textContent = `検出: 論理コア${cores}個 / 現在の有効並列数: ${computeParallelWorkers()}社同時処理`;
+    }
   });
   bindToggle('settings-exclude-dnc', 'excludeDnc', renderResults);
   bindToggle('settings-saved-only', 'savedOnly', renderResults);
@@ -6006,10 +6028,11 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
     saveStore();
     updateOnboarding();
     rescore();
-    onProgress?.(`${qIdx+1}/${queries.length}: ${filteredCandidates.length}社を「評価中」で追加(3社並列で精査開始)`);
+    onProgress?.(`${qIdx+1}/${queries.length}: ${filteredCandidates.length}社を「評価中」で追加(${computeParallelWorkers()}社並列で精査開始)`);
 
-    // 3社並列ワーカー
-    const WORKERS = 3;
+    // 並列ワーカー数: PCの論理コア数を基準に自動 (手動設定で上書き可)
+    // 上限はネットワーク負荷とブラウザの fetch 並列上限を考慮して 12
+    const WORKERS = computeParallelWorkers();
     let cursor = 0;
     let processed = 0;
     const total = filteredCandidates.length;
@@ -6357,6 +6380,23 @@ function htmlToText(html) {
     .trim();
 }
 
+// 並列ワーカー数を計算
+// - 設定 parallelWorkers が 'auto' or 未設定 → navigator.hardwareConcurrency を使う
+// - 数値が設定されていればそれを使う
+// - 範囲は 2-12 にクランプ
+function computeParallelWorkers() {
+  const setting = store.opts.parallelWorkers;
+  let n;
+  if (typeof setting === 'number' && setting > 0) {
+    n = setting;
+  } else {
+    // CPU論理コア数を基準に、コア数そのまま (HP取得は I/O 待ちなのでCPU数より多くてOK)
+    const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+    n = cores; // I/Oメインのため等倍で十分高速。物理的にも 16 を超える効果は薄い
+  }
+  return Math.max(2, Math.min(12, Math.floor(n)));
+}
+
 /* ════════════════════════════════════════════════════════════
    ローカル特化AIエンジン (Claude API を一切使わない適合度評価)
    localAiMode=ON のとき、HP本文を読んでブラウザ内で完結評価する。
@@ -6409,6 +6449,32 @@ function extractProductKeywords(productText, icp) {
   return [...set].filter(Boolean).slice(0, 40);
 }
 
+// 大企業マーカー語 (これらが多いほど大企業度が高い)
+const LOCAL_BIGCO_MARKERS = [
+  '上場', '東証', 'プライム市場', 'スタンダード市場', 'グロース市場',
+  'TOPIX', '日経平均', 'IR情報', 'IRライブラリ', '株主の皆様', '株主総会',
+  '有価証券報告書', '決算短信', '年次報告書', 'アニュアルレポート',
+  '取締役会', '監査役', '社外取締役',
+  'グループ会社', 'ホールディングス', 'グループ企業',
+  '世界中', 'グローバル展開', '海外拠点', '海外法人', 'グローバル本社',
+  '連結子会社', '連結売上', '売上高1000億', '売上高100億',
+  '従業員数1000', '従業員数2000', '従業員数3000', '従業員数5000',
+];
+
+// 大企業度を 0-100 で計算 (語句マッチ数 + 推定従業員数)
+function detectBigCompanyScore(text, employees) {
+  let s = 0;
+  const hits = LOCAL_BIGCO_MARKERS.filter(kw => text.includes(kw));
+  s += hits.length * 12;
+  if (employees) {
+    if (employees >= 5000) s += 60;
+    else if (employees >= 1000) s += 45;
+    else if (employees >= 500) s += 25;
+    else if (employees >= 300) s += 10;
+  }
+  return { score: Math.min(100, s), markers: hits.slice(0, 4) };
+}
+
 // HP本文から企業プロファイルを抽出 (業種・規模・シグナル・含有語)
 function extractLocalCompanyProfile(company, hpText) {
   const text = (hpText || '') + ' ' + (company.description || '');
@@ -6430,7 +6496,9 @@ function extractLocalCompanyProfile(company, hpText) {
   for (const [sig, kws] of Object.entries(LOCAL_SIGNAL_KEYWORDS)) {
     signals[sig] = kws.reduce((n, kw) => n + (text.includes(kw) ? 1 : 0), 0);
   }
-  return { industry: bestIndustry, industryHits, employees, signals, textLen: text.length, text };
+  // 大企業度
+  const bigco = detectBigCompanyScore(text, employees);
+  return { industry: bestIndustry, industryHits, employees, signals, textLen: text.length, text, bigco };
 }
 
 // ローカル深層評価: aiScoreCompany と同じ形のオブジェクトを返す (Claude不使用)
@@ -6461,7 +6529,10 @@ function localScoreCompanyDeep(company, productText, hpText) {
     const sizeCat = empN <= 50 ? 'small' : empN <= 300 ? 'mid' : 'large';
     size_match = (icp.sizes && icp.sizes.length) ? (icp.sizes.includes(sizeCat) ? 100 : 35) : 60;
   }
-  // 4. キーワード被覆度 (商材特徴語がHPにどれだけ出るか = TF風)
+  // 4. キーワード被覆度 (商材特徴語がHPにどれだけ出るか = TF-IDF風)
+  //    HP本文の長さで正規化して、大企業のHPが情報量で勝つ問題を是正する。
+  //    大手は会社概要・IR・採用ページが膨大でキーワードが偶発的に多くマッチしやすい。
+  //    マッチ密度 (= マッチ数 / HP長) を組み込み、HP長補正を適用。
   const learn = store.localWeights || {};
   let kwHit = 0, kwWeighted = 0, kwTotalWeight = 0;
   const matchedKws = [];
@@ -6473,13 +6544,20 @@ function localScoreCompanyDeep(company, productText, hpText) {
       if (matchedKws.length < 8) matchedKws.push(kw);
     }
   }
-  const evidence_strength = productKws.length ? Math.round(100 * kwWeighted / Math.max(1, kwTotalWeight)) : 30;
-  // 5. タイミングシグナル
+  const coverage = productKws.length ? (kwWeighted / Math.max(1, kwTotalWeight)) : 0.3;
+  // HP長 8KB 想定で正規化。大企業の長文HPで coverage が高くなる効果を 0.7-1.0 にクランプ
+  const lenFactor = Math.min(1.0, Math.max(0.7, 8000 / Math.max(2000, prof.textLen)));
+  const evidence_strength = Math.round(100 * coverage * lenFactor);
+  // 5. タイミングシグナル (大企業はHPボリュームで自動的にマッチしがちなので閾値を上げる)
   const sg = prof.signals;
-  const timingRaw = (sg.growth_hiring>0?25:0) + (sg.growth_expand>0?35:0) + (sg.modernize>0?15:0);
+  const timingRaw = (sg.growth_hiring >= 2 ? 25 : 0) +
+                    (sg.growth_expand >= 1 ? 35 : 0) +
+                    (sg.modernize >= 2 ? 15 : 0);
   const timing_signal = Math.min(100, timingRaw);
   // 6. 課題合致
-  const painRaw = (sg.pain_efficiency>0?35:0) + (sg.pain_cost>0?30:0) + (sg.pain_succession>0?25:0);
+  const painRaw = (sg.pain_efficiency >= 2 ? 35 : 0) +
+                  (sg.pain_cost >= 2 ? 30 : 0) +
+                  (sg.pain_succession > 0 ? 25 : 0);
   const pain_alignment = Math.min(100, painRaw || (industry_match >= 55 ? 30 : 10));
 
   // --- 競合判定 (商材カテゴリの語を「提供・販売」している) ---
@@ -6500,6 +6578,19 @@ function localScoreCompanyDeep(company, productText, hpText) {
     timing_signal * 0.16 +
     size_match * 0.12
   );
+
+  // --- 大企業ペナルティ (ICPのターゲット規模が中小なら大手を強く減点) ---
+  // 大手は HP 情報量が多く、キーワードがたくさん引っかかってスコアが上振れする。
+  // ICP に large が含まれていなければ、大企業度に応じて -30 まで減点する。
+  const targetIsSMB = !icp.sizes || icp.sizes.length === 0 ||
+    icp.sizes.some(s => s === 'small' || s === 'mid');
+  const targetIncludesLarge = (icp.sizes || []).includes('large');
+  let bigcoPenalty = 0;
+  if (targetIsSMB && !targetIncludesLarge && prof.bigco.score >= 40) {
+    bigcoPenalty = Math.round(prof.bigco.score * 0.35); // 最大 -35
+    score = Math.max(0, score - bigcoPenalty);
+  }
+
   // HP情報が薄い場合は確信度・スコアを抑制
   const thin = prof.textLen < 400;
   let confidence = thin ? 'low' : (kwHit >= 4 && (timing_signal>0||pain_alignment>=30)) ? 'high' : 'medium';
@@ -6526,6 +6617,10 @@ function localScoreCompanyDeep(company, productText, hpText) {
 
   const risks = [];
   if (is_competitor) risks.push('同業・競合の可能性');
+  if (bigcoPenalty > 0) {
+    const m = (prof.bigco.markers || []).slice(0,2).join('・');
+    risks.push(`大企業の可能性 (${m||'規模シグナル検出'}・SMB ターゲット外)`);
+  }
   if (thin) risks.push('HP情報が少なく判断材料が限定的');
   if (company.activeness === 'inactive') risks.push('活動停止シグナルあり');
 
@@ -7169,7 +7264,9 @@ async function aiScoreStage1Quick(company, productText, hpText) {
     if (prefs.length > 0) return `ユーザー選択地域: ${prefs.slice(0,8).join('・')}`;
     return '地域指定なし';
   })();
-  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから商材適合度を「厳しく」評価してください。なんとなく当てはまりそう、ではなく、HPテキストから購買可能性の根拠を読み取れる時のみ高スコアを付けてください。JSONのみで返答。`;
+  const sys = `あなたはB2B営業のシニアコンサルタントと企業データバリデーション専門家です。実在法人か検証してから商材適合度を「厳しく」評価してください。なんとなく当てはまりそう、ではなく、HPテキストから購買可能性の根拠を読み取れる時のみ高スコアを付けてください。
+【大企業バイアスを排除】上場・IR・グループ会社・連結子会社・グローバル展開などの大企業マーカーが多い企業は、HP情報量が多いだけでキーワードがマッチしがちです。ターゲットが中小・中堅(small/mid)で大企業マーカー多数の場合は減点してください。
+JSONのみで返答。`;
   const prompt = `商材: ${productText}
 
 ${selectedRegionsHint}
@@ -7397,9 +7494,25 @@ async function aiScoreStage3Ensemble(company, productText, hpText, stage1, houji
 // 高品質モードで実行。Stage1 で通過した候補のみ呼ばれる前提。
 // 商材ニーズの根拠を HP テキストから「引用付き」で抽出し、購買シグナルを精査する。
 async function aiScoreStage3Deep(company, productText, hpText, stage1, houjin, modelOverride) {
+  const targetSizes = (state.icp?.sizes || []).join('・') || '中小〜中堅(small/mid想定)';
   const sys = `あなたは日本のB2B営業における超ベテランのアカウントエグゼクティブです。
 HPテキストを精読し、商材を購入する可能性を「証拠ベース」で厳密に評価します。
 推測や一般論ではなく、HPに書かれている具体的な記述を引用して根拠を示してください。
+
+【極めて重要: 大企業バイアスを排除すること】
+本ツールの目的は「中小〜中堅の本気の見込み客」を発掘することです。
+有名企業・上場企業・大手グループは "HPの情報量が多いため、キーワードや
+シグナルが偶発的にたくさんマッチして高得点に見える" 傾向があります。
+これに惑わされず、ターゲット規模(${targetSizes}) に該当しない大企業は
+以下の方針で減点してください:
+- 上場/東証/IR情報/グループ会社/ホールディングス/連結子会社/グローバル展開等の
+  大企業マーカーが3個以上 → -25 点
+- 推定従業員数が ICP の想定規模を大きく超える(例: small/mid 想定で 1000名超)
+  → -30 点
+- 既にビジネスが超巨大で、本商材の意思決定スピードが極端に遅そう → -15 点
+減点後でも本当に強い購買シグナル(HP上の直接的なニーズ言及や類似商材の検討記載)が
+あれば例外的に高得点を維持してください。
+
 extended thinkingで考えた上で、最後に厳密なJSONのみを返答してください。`;
 
   const officialAddrLine = houjin && houjin.found

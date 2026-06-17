@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260516h">
+<link rel="stylesheet" href="style.css?v=20260516i">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -373,7 +373,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516h (UI仕上げ)</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516i (大企業バイアス是正・並列強化)</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -888,6 +888,18 @@ service cloud.firestore {
               <option value="4">4ページ</option>
             </select>
           </label>
+          <label class="kv" title="評価の並列処理数。多いほど高速だがPCとネットワークの負荷が上がる。自動はPCのCPUコア数を使用。"><span>⚡ 並列処理数<br><small class="muted">自動 = お使いのPCのCPUコア数に応じて最適化</small></span>
+            <select id="settings-parallel" class="select" style="width:160px">
+              <option value="auto">自動 (推奨)</option>
+              <option value="2">2 (省電力)</option>
+              <option value="4">4 (バランス)</option>
+              <option value="6">6</option>
+              <option value="8">8 (高速)</option>
+              <option value="10">10 (最大)</option>
+              <option value="12">12 (最速・高負荷)</option>
+            </select>
+          </label>
+          <div id="parallel-detected" style="font-size:11px;color:var(--muted);margin-top:-4px;padding-left:4px"></div>
         </div>
       </div>
 
@@ -1271,9 +1283,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260516h"></script>
-<script type="module" src="firebase-sync.js?v=20260516h"></script>
-<script src="data/regions.js?v=20260516h"></script>
-<script src="app.js?v=20260516h"></script>
+<script src="firebase-config.js?v=20260516i"></script>
+<script type="module" src="firebase-sync.js?v=20260516i"></script>
+<script src="data/regions.js?v=20260516i"></script>
+<script src="app.js?v=20260516i"></script>
 </body>
 </html>
