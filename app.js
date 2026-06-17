@@ -1274,6 +1274,7 @@ function loadStore() {
     if (d.crm) store.crm = d.crm;
     if (Array.isArray(d.searchLogs)) store.searchLogs = d.searchLogs;
     if (d.matchingLearnings) store.matchingLearnings = d.matchingLearnings;
+    if (d.lastSearchSignature) store.lastSearchSignature = d.lastSearchSignature;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1320,6 +1321,7 @@ function _saveStoreImpl() {
     crm: store.crm || { customers: [] },
     searchLogs: store.searchLogs || [],
     matchingLearnings: store.matchingLearnings || null,
+    lastSearchSignature: store.lastSearchSignature || '',
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -7490,6 +7492,16 @@ async function finalizeChat() {
 }
 
 /* ============ Pipeline ============ */
+// 検索条件のシグネチャ。商材・地域・業種・規模が同じなら同一とみなす。
+// これが前回と変わったときだけ、検索開始時に発見済みリストをリセットする。
+function buildSearchSignature(input) {
+  const prefs = (store.opts.regionPrefs || []).slice().sort().join('|');
+  const cities = (store.opts.regionCities || []).slice().sort().join('|');
+  const industry = (document.getElementById('filter-industry')?.value) || '';
+  const size = (document.getElementById('filter-size')?.value) || '';
+  return [(input || '').trim(), prefs, cities, industry, size].join('§');
+}
+
 async function runPipeline(input, options = {}) {
   const { discover = false } = options;
   if (!discover && getAllCompanies().length === 0) {
@@ -7993,20 +8005,24 @@ async function init() {
       return;
     }
     if (state.continuousSearch) {
-      // 既に検索中 → 停止
+      // 既に検索中 → 停止 (リストは保持。消さない)
       state.continuousSearch = false;
       state.searchAborted = true;
       logAction('search_stopped', input.slice(0, 80));
       saveStore();
+      const sb = document.getElementById('analyze-btn');
+      if (sb) { sb.classList.remove('searching'); sb.innerHTML = '⏹ 停止中… 再開するにはもう一度クリック'; }
       return;
     }
     state.continuousSearch = true;
     state.searchAborted = false;
     logAction('search_started', input.slice(0, 80), { regionPrefs: store.opts.regionPrefs, regionCities: store.opts.regionCities });
-    // 検索開始時に、過去の自動発見リストをリセット (毎回その地域で1から探す仕様)
-    // 保存・DNC・CRM・カスタム追加企業 は保持
+    // 検索条件(商材+地域+業種+規模)が前回から変わったときだけリストをリセット。
+    // 同じ条件での「停止→再開」「追加検索」ではリストを保持する(消えない)。
+    const sig = buildSearchSignature(input);
+    const conditionsChanged = !!store.lastSearchSignature && sig !== store.lastSearchSignature;
     const prevCount = (store.importedCompanies || []).length;
-    if (prevCount > 0) {
+    if (conditionsChanged && prevCount > 0) {
       // 保存済みのものは customCompanies に退避(失わせない)
       const savedIds = store.saved;
       const toKeep = store.importedCompanies.filter(c => savedIds.has(c.id));
@@ -8017,8 +8033,9 @@ async function init() {
       state.scored = [];
       state.discoveryRound = 0;
       // AI評価キャッシュは保持(同じ会社が再発見された時に再評価せず済む)
-      logAction('search_reset', `前回の${prevCount}社をクリア (保存${toKeep.length}社は退避)`);
+      logAction('search_reset', `条件変更により前回の${prevCount}社をクリア (保存${toKeep.length}社は退避)`);
     }
+    store.lastSearchSignature = sig;
     saveStore();
     const btn = document.getElementById('analyze-btn');
     const origText = btn.textContent;
