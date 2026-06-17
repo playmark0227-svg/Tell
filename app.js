@@ -1140,6 +1140,7 @@ function renderRow(c) {
         ${c.houjin_bangou ? `<div class="meta-tag" title="国税庁登記情報で確認済み">🆔 ${c.houjin_bangou}</div>` : ''}
         ${c.houjin_not_registered ? `<div class="meta-tag warn" title="国税庁に登記なし(任意団体・個人事業の可能性)">⚠ 未登記</div>` : ''}
         ${c._used_deep_eval ? `<div class="meta-tag good" title="Opus + 拡張思考で深く評価">🧠 Deep</div>` : ''}
+        ${c._local_eval ? `<div class="meta-tag" title="ローカルAIエンジンで評価 (API料金0円)">⚡ ローカルAI</div>` : ''}
         ${c.ai_tier ? `<div class="meta-tag tier-${c.ai_tier}" title="相対比較ティア (A=本命/D=非推奨): ${c.ai_rerank_reason||''}">${c.ai_tier}ランク</div>` : (c._reranked ? `<div class="meta-tag good" title="最終リランキング適用">🏆 Reranked</div>` : '')}
         ${c.activeness === 'inactive' ? `<div class="meta-tag warn" title="廃業・事業終了シグナル検出">💤 活動停止?</div>` : ''}
         ${c.activeness === 'active' ? `<div class="meta-tag good" title="最近の更新あり">⚡ アクティブ</div>` : ''}
@@ -1240,7 +1241,9 @@ const store = {
   billingHistory: [],
   // 課金設定(管理者がFirestore経由で全ユーザー共通設定として変更可)
   billingConfig: null, // null の場合は window.DEFAULT_BILLING_CONFIG を使う
-  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [] },
+  opts: { excludeDnc: true, savedOnly: false, dark: false, aiEnabled: false, aiKey: '', aiModel: 'claude-haiku-4-5-20251001', braveKey: '', braveProxy: '', regionPrefs: [], regionCities: [], bravePages: 2, qualityMode: true, knownCompetitors: [], localAiMode: false },
+  localWeights: {}, // ローカル学習で得たキーワード重み (Claude不使用)
+  localLearnedAt: 0,
   feedback: {}, // companyId -> { rating: 'good'|'bad'|null, score_correction, comment, t }
   crm: { customers: [] }, // 顧客管理リスト
   searchLogs: [], // 各検索の記録 [{id, t, productText, regions, industries, results, outcome}]
@@ -1275,6 +1278,8 @@ function loadStore() {
     if (Array.isArray(d.searchLogs)) store.searchLogs = d.searchLogs;
     if (d.matchingLearnings) store.matchingLearnings = d.matchingLearnings;
     if (d.lastSearchSignature) store.lastSearchSignature = d.lastSearchSignature;
+    if (d.localWeights) store.localWeights = d.localWeights;
+    if (d.localLearnedAt) store.localLearnedAt = d.localLearnedAt;
     store.opts = { ...store.opts, ...(d.opts || {}) };
   } catch (e) { console.warn('loadStore failed', e); }
 }
@@ -1322,6 +1327,8 @@ function _saveStoreImpl() {
     searchLogs: store.searchLogs || [],
     matchingLearnings: store.matchingLearnings || null,
     lastSearchSignature: store.lastSearchSignature || '',
+    localWeights: store.localWeights || {},
+    localLearnedAt: store.localLearnedAt || 0,
     opts: store.opts,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
@@ -3652,6 +3659,7 @@ function renderSettingsPanel() {
   }
   // 各設定の現在値を反映
   const sync = (id, val) => { const el = document.getElementById(id); if (el) { if (el.type === 'checkbox') el.checked = !!val; else el.value = val; }};
+  sync('settings-local-ai', store.opts.localAiMode === true);
   sync('settings-quality-mode', store.opts.qualityMode !== false);
   sync('settings-ensemble-mode', store.opts.ensembleMode === true);
   sync('settings-brave-pages', String(store.opts.bravePages || 2));
@@ -3670,6 +3678,11 @@ function setupSettingsPanel() {
       if (after) after();
     });
   };
+  bindToggle('settings-local-ai', 'localAiMode', () => {
+    if (store.opts.localAiMode) {
+      alert('⚡ ローカルAIモードをONにしました。\n以降の検索ではClaude APIを使わず、ブラウザ内エンジンで評価します（API料金ゼロ）。\n企業発見のためのWeb検索(Brave)のみ使用します。');
+    }
+  });
   bindToggle('settings-quality-mode', 'qualityMode');
   bindToggle('settings-ensemble-mode', 'ensembleMode');
   bindToggle('settings-brave-pages', 'bravePages', () => {
@@ -5193,6 +5206,8 @@ function generateQueriesFromICP(productText, icp, round = 0) {
 }
 
 async function aiGenerateQueries(productText, icp) {
+  // ローカルAIモード or API未設定 → ルールベースのクエリ生成 (Claude不使用)
+  if (store.opts.localAiMode === true) return generateQueriesFromICP(productText, icp);
   if (!store.opts.aiKey && !store.opts.braveProxy) return generateQueriesFromICP(productText, icp);
   const qualityMode = store.opts.qualityMode !== false;
   const prefs = [...selectedPrefs()];
@@ -6039,9 +6054,9 @@ async function discoverFromBrave(productText, icp, onProgress, options = {}) {
   rescoreFlush();
   saveStore();
 
-  // Phase 8: 最終リランキング (品質モード時のみ)
+  // Phase 8: 最終リランキング (品質モード時のみ・Claude使用のためローカルモードでは無効)
   // 全候補を一覧して相対的に並び替え、calibration ズレを補正
-  if (store.opts.qualityMode !== false && found.length >= 5) {
+  if (store.opts.qualityMode !== false && store.opts.localAiMode !== true && found.length >= 5) {
     try {
       onProgress?.(`🧠 最終リランキング中(Top${Math.min(50, found.length)}社を相対比較)…`);
       await rerankTopCandidates(productText, found.slice(0, 50));
@@ -6339,6 +6354,257 @@ function htmlToText(html) {
     .trim();
 }
 
+/* ════════════════════════════════════════════════════════════
+   ローカル特化AIエンジン (Claude API を一切使わない適合度評価)
+   localAiMode=ON のとき、HP本文を読んでブラウザ内で完結評価する。
+   コスト: 0円 (Claude API 呼び出しなし)
+   ════════════════════════════════════════════════════════════ */
+
+// 業種推定用キーワード辞書 (HP本文から業種を推定)
+const LOCAL_INDUSTRY_KEYWORDS = {
+  '製造業': ['製造', '工場', '生産', '加工', '部品', '組立', '金型', '溶接', '機械加工', '試作', '量産', 'ものづくり'],
+  '建設業': ['建設', '工事', '施工', '建築', '土木', 'リフォーム', '設計事務所', 'ゼネコン', '工務店', '左官', '基礎工事'],
+  '卸売・小売業': ['卸', '小売', '販売', '商社', '流通', '仕入', '店舗', 'EC', '通販', '問屋'],
+  '飲食業': ['飲食', 'レストラン', '居酒屋', 'カフェ', '食堂', '料理', 'メニュー', '店舗', '厨房'],
+  '運輸業': ['運送', '物流', '配送', 'トラック', '倉庫', '輸送', 'ロジスティクス', '宅配', '貨物'],
+  '情報通信業': ['ソフトウェア', 'システム開発', 'IT', 'アプリ', 'web制作', 'クラウド', 'SaaS', 'DX', 'エンジニア', 'プログラム', 'ネットワーク'],
+  '金融・保険業': ['金融', '保険', '銀行', '証券', '投資', 'ローン', 'リース', 'ファイナンス'],
+  '不動産業': ['不動産', '賃貸', '売買', '物件', 'マンション', '土地', '仲介', '管理', '建物管理'],
+  '医療・福祉': ['医療', 'クリニック', '病院', '介護', '福祉', '看護', 'リハビリ', 'デイサービス', '歯科', '薬局'],
+  '教育・学習支援': ['教育', '学習', '塾', 'スクール', '研修', '講座', 'eラーニング', '資格', '予備校', '保育'],
+  'サービス業': ['サービス', 'コンサル', '人材', '清掃', '警備', '広告', 'デザイン', 'マーケティング', '代行'],
+  '農林水産業': ['農業', '農園', '漁業', '水産', '林業', '畜産', '栽培', '養殖'],
+};
+
+// 成長/購買タイミングを示すシグナル語
+const LOCAL_SIGNAL_KEYWORDS = {
+  growth_hiring: ['採用情報', '新卒採用', '中途採用', '求人', '募集', 'キャリア採用', '積極採用', '人材募集'],
+  growth_expand: ['新規事業', '事業拡大', '拠点拡大', '新工場', '増設', '設備投資', '業務拡大', '新店舗', 'M&A', '出店'],
+  pain_efficiency: ['業務効率', '効率化', '生産性', '自動化', '省人化', 'DX', 'デジタル化', 'ペーパーレス', '残業削減'],
+  pain_cost: ['コスト削減', 'コストダウン', '経費削減', '原価', 'コスト最適化'],
+  pain_succession: ['事業承継', '後継者', '世代交代', '代表交代'],
+  modernize: ['リニューアル', '刷新', '見直し', '改革', '改善', 'アップデート'],
+};
+
+const STOPWORDS_JP = new Set(['当社','弊社','会社','株式会社','有限会社','私たち','お客様','ご','こと','もの','ため','など','という','および','また','その','この','これ','それ','ます','です','ました','する','ある','いる','なる','れる','られる','ください','お問い合わせ','ホーム','トップ','について','による','ながら','として','ています','おります']);
+
+// 商材テキストから特徴語(キーワード)を抽出。ICPキーワード + 形態素っぽい分割。
+function extractProductKeywords(productText, icp) {
+  const set = new Set();
+  // ICPのキーワード・課題語を最優先
+  (icp?.keywords || []).forEach(k => k && set.add(k));
+  (icp?.pains || []).forEach(p => {
+    (p || '').split(/[のがでにを、・\s]/).filter(t => t.length >= 2).forEach(t => set.add(t));
+  });
+  // 商材本文からカタカナ語・漢字熟語を抽出
+  const text = productText || '';
+  const katakana = text.match(/[゠-ヿ]{3,}/g) || [];
+  const kanji = text.match(/[一-鿿]{2,}/g) || [];
+  [...katakana, ...kanji].forEach(w => {
+    if (w.length >= 2 && w.length <= 12 && !STOPWORDS_JP.has(w)) set.add(w);
+  });
+  return [...set].filter(Boolean).slice(0, 40);
+}
+
+// HP本文から企業プロファイルを抽出 (業種・規模・シグナル・含有語)
+function extractLocalCompanyProfile(company, hpText) {
+  const text = (hpText || '') + ' ' + (company.description || '');
+  // 業種推定: 辞書マッチ数が最大の業種
+  let bestIndustry = company.industry && company.industry !== '不明' ? company.industry : '';
+  let bestHits = 0;
+  const industryHits = {};
+  for (const [ind, kws] of Object.entries(LOCAL_INDUSTRY_KEYWORDS)) {
+    const hits = kws.reduce((n, kw) => n + (text.includes(kw) ? 1 : 0), 0);
+    industryHits[ind] = hits;
+    if (hits > bestHits) { bestHits = hits; bestIndustry = ind; }
+  }
+  // 規模推定: 「従業員数 N名」「社員 N名」
+  let employees = company.employees || null;
+  const empMatch = text.match(/(従業員数?|社員数?|スタッフ数?)[^\d]{0,6}(\d{1,5})\s*[名人]/);
+  if (empMatch) employees = parseInt(empMatch[2], 10);
+  // シグナル抽出
+  const signals = {};
+  for (const [sig, kws] of Object.entries(LOCAL_SIGNAL_KEYWORDS)) {
+    signals[sig] = kws.reduce((n, kw) => n + (text.includes(kw) ? 1 : 0), 0);
+  }
+  return { industry: bestIndustry, industryHits, employees, signals, textLen: text.length, text };
+}
+
+// ローカル深層評価: aiScoreCompany と同じ形のオブジェクトを返す (Claude不使用)
+function localScoreCompanyDeep(company, productText, hpText) {
+  const icp = state.icp || { industries: [], sizes: [], pains: [], keywords: [] };
+  const strategy = state.strategy || {};
+  const prof = extractLocalCompanyProfile(company, hpText);
+  const text = prof.text;
+  const productKws = extractProductKeywords(productText, icp);
+
+  // --- 次元スコア (各 0-100) ---
+  // 1. 業種マッチ
+  let region_match = 100;
+  // 2. 業種
+  let industry_match = 20;
+  const effIndustry = prof.industry || company.industry || '';
+  if (icp.industries && icp.industries.length) {
+    if (icp.industries.includes(effIndustry)) industry_match = 100;
+    else if (prof.industryHits[effIndustry] >= 2) industry_match = 55;
+    else industry_match = 25;
+  } else {
+    industry_match = 50;
+  }
+  // 3. 規模
+  let size_match = 50;
+  const empN = prof.employees;
+  if (empN != null) {
+    const sizeCat = empN <= 50 ? 'small' : empN <= 300 ? 'mid' : 'large';
+    size_match = (icp.sizes && icp.sizes.length) ? (icp.sizes.includes(sizeCat) ? 100 : 35) : 60;
+  }
+  // 4. キーワード被覆度 (商材特徴語がHPにどれだけ出るか = TF風)
+  const learn = store.localWeights || {};
+  let kwHit = 0, kwWeighted = 0, kwTotalWeight = 0;
+  const matchedKws = [];
+  for (const kw of productKws) {
+    const w = 1 + (learn[kw] || 0); // 学習重み (受注企業に多い語は重み大)
+    kwTotalWeight += Math.max(0.2, w);
+    if (text.includes(kw)) {
+      kwHit++; kwWeighted += Math.max(0.2, w);
+      if (matchedKws.length < 8) matchedKws.push(kw);
+    }
+  }
+  const evidence_strength = productKws.length ? Math.round(100 * kwWeighted / Math.max(1, kwTotalWeight)) : 30;
+  // 5. タイミングシグナル
+  const sg = prof.signals;
+  const timingRaw = (sg.growth_hiring>0?25:0) + (sg.growth_expand>0?35:0) + (sg.modernize>0?15:0);
+  const timing_signal = Math.min(100, timingRaw);
+  // 6. 課題合致
+  const painRaw = (sg.pain_efficiency>0?35:0) + (sg.pain_cost>0?30:0) + (sg.pain_succession>0?25:0);
+  const pain_alignment = Math.min(100, painRaw || (industry_match >= 55 ? 30 : 10));
+
+  // --- 競合判定 (商材カテゴリの語を「提供・販売」している) ---
+  let is_competitor = false, competitor_evidence = null;
+  const catPatterns = (state.classification?.category?.patterns) || [];
+  const catHits = catPatterns.filter(p => { try { return p.test(text); } catch { return false; } }).length;
+  if (catHits >= 2 && /(提供|販売|サービスを|ソリューション|導入支援|開発|製造販売)/.test(text)) {
+    is_competitor = true;
+    competitor_evidence = '商材と同種のサービスを提供している可能性';
+  }
+
+  // --- 総合スコア (加重平均) ---
+  const dims = { region_match, industry_match, size_match, timing_signal, evidence_strength, pain_alignment };
+  let score = Math.round(
+    industry_match * 0.30 +
+    evidence_strength * 0.26 +
+    pain_alignment * 0.16 +
+    timing_signal * 0.16 +
+    size_match * 0.12
+  );
+  // HP情報が薄い場合は確信度・スコアを抑制
+  const thin = prof.textLen < 400;
+  let confidence = thin ? 'low' : (kwHit >= 4 && (timing_signal>0||pain_alignment>=30)) ? 'high' : 'medium';
+  if (thin) score = Math.min(score, 55);
+  if (is_competitor) score = Math.min(score, 10);
+
+  // --- 根拠・購買シグナル・トークの生成 ---
+  const buying_signals = [];
+  if (sg.growth_hiring>0) buying_signals.push('採用拡大中（成長局面）');
+  if (sg.growth_expand>0) buying_signals.push('新規事業・拠点拡大の動き');
+  if (sg.pain_efficiency>0) buying_signals.push('業務効率化・DXに関心');
+  if (sg.pain_cost>0) buying_signals.push('コスト削減を重視');
+  if (sg.pain_succession>0) buying_signals.push('事業承継フェーズ');
+  if (sg.modernize>0) buying_signals.push('刷新・改善に前向き');
+
+  let fit_evidence = null;
+  if (matchedKws.length) fit_evidence = `「${matchedKws.slice(0,3).join('・')}」がHPに合致`;
+  else if (industry_match >= 100) fit_evidence = `業種「${effIndustry}」がターゲットに一致`;
+
+  const talking_points = [];
+  if (sg.growth_hiring>0) talking_points.push('採用強化中とのことで、御社の成長フェーズに合わせたご提案');
+  if (sg.pain_efficiency>0) talking_points.push('業務効率化のお取り組みに関連したご案内');
+  if (matchedKws.length) talking_points.push(`${matchedKws[0]}に関するソリューションのご紹介`);
+
+  const risks = [];
+  if (is_competitor) risks.push('同業・競合の可能性');
+  if (thin) risks.push('HP情報が少なく判断材料が限定的');
+  if (company.activeness === 'inactive') risks.push('活動停止シグナルあり');
+
+  const reasoning = is_competitor
+    ? '同種サービス提供の競合可能性が高い'
+    : score >= 70 ? `業種・キーワード・シグナルが多面的に合致（ローカル評価）`
+    : score >= 45 ? `部分的に適合（ローカル評価）`
+    : `適合度は限定的（ローカル評価）`;
+
+  // is_company / name_valid 判定 (既存ルールを流用)
+  const is_company = isLikelyRealCompany(company);
+  const name_valid = !isGenericName(company.name) && !looksLikeArticle(company.name, company.source_url || company.website, company.description);
+
+  // 地域マッチ (best.prefecture と選択地域)
+  const prefs = selectedPrefs(); const cities = selectedCities();
+  let in_target_region = true;
+  if (prefs.size > 0 || cities.size > 0) {
+    if (!company.prefecture) in_target_region = false;
+    else if (prefs.has(company.prefecture)) in_target_region = true;
+    else {
+      in_target_region = false;
+      for (const ck of cities) { if (ck.startsWith(company.prefecture + '/')) { in_target_region = true; break; } }
+    }
+  }
+  if (!in_target_region) dims.region_match = 0;
+
+  return {
+    score,
+    reasoning,
+    fit: score >= 70 ? 'high' : score >= 45 ? 'mid' : 'low',
+    fit_evidence,
+    fit_citations: matchedKws.slice(0,3).map(kw => ({ quote: kw, why: '商材キーワードがHPに出現' })),
+    buying_signals,
+    risks,
+    ai_confidence: confidence,
+    is_company,
+    name_valid,
+    phone_valid: !!company.phone,
+    in_target_region,
+    is_competitor,
+    competitor_evidence,
+    dimensions: dims,
+    talking_points,
+    decision_makers: [],
+    employees_estimate: empN || null,
+    actual_industry: prof.industry || null,
+    _used_deep_eval: false,
+    _local_eval: true,
+  };
+}
+
+// ローカル学習: CRM受注/失注からキーワード重みテーブルを更新 (Claude不使用・0円)
+function updateLocalWeights() {
+  ensureCrm();
+  const won = store.crm.customers.filter(c => c.stage === 'won');
+  const lost = store.crm.customers.filter(c => c.stage === 'lost');
+  if (won.length + lost.length < 2) return { error: '学習には受注/失注が合計2件以上必要です' };
+  const weights = {};
+  const tally = (custs, sign) => {
+    for (const c of custs) {
+      const bag = [
+        c.industry || '',
+        ...(c.ai_buying_signals || []),
+        ...((c.memo || '').match(/[゠-ヿ]{3,}|[一-鿿]{2,}/g) || []),
+      ];
+      for (const w of bag) {
+        if (!w || w.length < 2 || STOPWORDS_JP.has(w)) continue;
+        weights[w] = (weights[w] || 0) + sign;
+      }
+    }
+  };
+  tally(won, 0.5);   // 受注企業の特徴語 → 重み+
+  tally(lost, -0.4); // 失注企業の特徴語 → 重み-
+  // -1.0〜+2.0 にクランプ
+  for (const k of Object.keys(weights)) weights[k] = Math.max(-1.0, Math.min(2.0, weights[k]));
+  store.localWeights = weights;
+  store.localLearnedAt = Date.now();
+  saveStore();
+  const top = Object.entries(weights).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>`${k}(${v>0?'+':''}${v.toFixed(1)})`);
+  return { count: Object.keys(weights).length, won: won.length, lost: lost.length, top };
+}
+
 async function enrichCompanyDeep(c, productText) {
   if (!c.website || !store.opts.braveProxy) return c;
   const baseUrl = c.website.replace(/\/+$/, '');
@@ -6452,7 +6718,11 @@ async function enrichCompanyDeep(c, productText) {
     const activeness = detectActivenessSignals(hpText);
     best.activeness = activeness.active;
     best.activeness_signals = activeness.signals;
-    const ai = await aiScoreCompany(best, productText, hpText, { qualityMode: isHigh });
+    // ローカルAIモード: Claude API を使わずブラウザ内エンジンで評価 (コスト0)
+    const useLocal = store.opts.localAiMode === true;
+    const ai = useLocal
+      ? localScoreCompanyDeep(best, productText, hpText)
+      : await aiScoreCompany(best, productText, hpText, { qualityMode: isHigh });
     if (ai) {
       best.ai_score = ai.score;
       best.ai_reasoning = ai.reasoning;
@@ -6483,6 +6753,7 @@ async function enrichCompanyDeep(c, productText) {
         best.industry = ai.actual_industry;
       }
       best._used_deep_eval = ai._used_deep_eval === true;
+      best._local_eval = ai._local_eval === true;
       // 国税庁登記情報
       if (ai.houjin_bangou) {
         best.houjin_bangou = ai.houjin_bangou;
@@ -6701,7 +6972,13 @@ JSON配列のみ返答:
 }
 
 async function batchScoreExisting(productText, onProgress) {
-  if (!productText || (!store.opts.aiKey && !store.opts.braveProxy)) return;
+  if (!productText) return;
+  // ローカルAIモード: Claude を使わず、ルールベース scoreCompany に任せる (再評価不要)
+  if (store.opts.localAiMode === true) {
+    onProgress?.('⚡ ローカル評価モードのため、既存企業はルールベースで採点済み');
+    return;
+  }
+  if (!store.opts.aiKey && !store.opts.braveProxy) return;
   const all = getAllCompanies();
   const needScoring = all.filter(c => typeof c.ai_score !== 'number');
   if (needScoring.length === 0) return;
@@ -7516,7 +7793,15 @@ async function runPipeline(input, options = {}) {
     progElEarly.textContent = '🤖 AIが商材を分析中…(数秒〜十数秒)';
     progElEarly.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-  if (store.opts.aiKey || store.opts.braveProxy) {
+  if (store.opts.localAiMode === true) {
+    // ローカルAIモード: 商材分析もルールベース (Claude不使用)
+    setAIStatus('ローカル分析中…', 'mid');
+    state.classification = classifyProduct(input);
+    state.icp = state.classification.category.icp;
+    state.strategy = inferStrategy(state.classification.category, state.icp);
+    state.intentSignals = analyzeProductIntent(input);
+    setAIStatus('⚡ ローカル分析完了 (API料金0円)', 'good');
+  } else if (store.opts.aiKey || store.opts.braveProxy) {
     setAIStatus('AI分析中…', 'mid');
     try {
       const result = await aiAnalyzeProduct(input);
@@ -7588,8 +7873,11 @@ async function runPipeline(input, options = {}) {
       };
 
       const useQuality = store.opts.qualityMode !== false;
+      const isLocal = store.opts.localAiMode === true;
+      // 国税庁API は Claude を使わないのでローカルモードでも使える
       const useHoujin = useQuality && (prefList.length > 0 || cityList.length > 0);
-      const useAiSuggest = useQuality;
+      // AI候補生成は Claude を使うのでローカルモードでは無効
+      const useAiSuggest = useQuality && !isLocal;
 
       const [found, aiSuggestedRaw, houjinCandidatesRaw] = await Promise.all([
         discoverFromBrave(input, state.icp, msg => {
@@ -8182,6 +8470,14 @@ async function init() {
   });
   const lmBtn = document.getElementById('learn-matching-btn');
   if (lmBtn) lmBtn.addEventListener('click', async () => {
+    // ローカルAIモードのときは Claude を使わないローカル学習 (0円)
+    if (store.opts.localAiMode === true) {
+      const r = updateLocalWeights();
+      if (r.error) { alert(r.error); return; }
+      alert(`✓ ローカル学習完了 (API料金 0円)\n\n受注${r.won}社・失注${r.lost}社から ${r.count} 個のキーワード重みを学習しました。\n\n重要キーワード:\n${(r.top||[]).join('、')}\n\n以降のローカル評価に自動適用されます。`);
+      maybeNudgeLearning();
+      return;
+    }
     if (!confirm('CRM顧客データ・架電履歴・メモを AI が分析し、「どんな企業が刺さるか」のパターンを学習します。\n以降の検索とAI評価に自動適用されます。実行しますか?')) return;
     lmBtn.disabled = true;
     lmBtn.textContent = '🎓 AI学習中…(30-60秒)';

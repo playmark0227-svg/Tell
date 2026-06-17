@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>tell partner - B2B営業リスト適合度スコアリング</title>
-<link rel="stylesheet" href="style.css?v=20260516f">
+<link rel="stylesheet" href="style.css?v=20260516g">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -373,7 +373,7 @@ wrangler deploy</pre>
             <tr><td style="padding:6px;color:var(--muted)">プロジェクトID:</td><td id="sys-project">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">ログインユーザー:</td><td id="sys-user">-</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">権限:</td><td id="sys-role">-</td></tr>
-            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516f (Fable 5 選別 / Sonnet 個別評価)</td></tr>
+            <tr><td style="padding:6px;color:var(--muted)">アプリバージョン:</td><td>v=20260516g (ローカルAIモード搭載)</td></tr>
             <tr><td style="padding:6px;color:var(--muted)">利用規約同意日時:</td><td id="sys-tos">-</td></tr>
           </table>
           <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
@@ -853,7 +853,10 @@ service cloud.firestore {
       <div class="card">
         <h3>🔍 検索品質設定</h3>
         <div class="settings-grid">
-          <label class="kv"><span>🧠 高品質モード(Deep Eval)<br><small class="muted">Opus + 拡張思考 + 国税庁API + 引用必須</small></span>
+          <label class="kv" style="background:rgba(99,102,241,.06);border-radius:8px;padding:8px 10px"><span>⚡ ローカルAIモード(API課金ゼロ)<br><small class="muted">Claude APIを使わず、ブラウザ内の特化エンジンで適合度評価。<b>API料金が一切かかりません</b>。検索(Brave)のみ使用。</small></span>
+            <input type="checkbox" id="settings-local-ai">
+          </label>
+          <label class="kv"><span>🧠 高品質モード(Deep Eval)<br><small class="muted">Opus + 拡張思考 + 国税庁API + 引用必須（ローカルAIモードOFF時）</small></span>
             <input type="checkbox" id="settings-quality-mode">
           </label>
           <label class="kv"><span>🎯 マルチモデルアンサンブル<br><small class="muted">Fable 5 + Sonnet 合議で更に厳密 (コスト2倍)</small></span>
@@ -1250,9 +1253,9 @@ service cloud.firestore {
   </div>
 </div>
 
-<script src="firebase-config.js?v=20260516f"></script>
-<script type="module" src="firebase-sync.js?v=20260516f"></script>
-<script src="data/regions.js?v=20260516f"></script>
-<script src="app.js?v=20260516f"></script>
+<script src="firebase-config.js?v=20260516g"></script>
+<script type="module" src="firebase-sync.js?v=20260516g"></script>
+<script src="data/regions.js?v=20260516g"></script>
+<script src="app.js?v=20260516g"></script>
 </body>
 </html>
